@@ -7,47 +7,42 @@ import dask.dataframe as dd
 os.chdir(r"E:\Wejo\Wejo-Aug-Nov 2021")
 
 # read Wejo trajectory data for August 17, 2021
-file_name = "output_dt=2021-08-17.csv"
-df = dd.read_csv(file_name, assume_missing = True)
+file_input = "output_dt=2021-08-17.csv"
+df = dd.read_csv(file_input, assume_missing = True)
 
 # get unique trip IDs
 all_trips = set(df.TripID.unique())
 
-# specify coordinate gates for filtering trip trajectories at Speedway Blvd & Campbell Ave
-gate = {'EB': {'adv': [32.23626426244028, -110.94667104330036], 'ent': [32.23592026475734, -110.94348358193795]},
-        'WB': {'adv': [32.236255402912555, -110.94133695642331], 'ent': [32.2358688818948, -110.94449404879498]}}
+# specify coordinate gates for filtering trip trajectories
+gate = {'g1': {'c1': [32.23630647990695, -110.93969748930743], 'c2': [32.235866420981864, -110.94095037095649]},
+        'g2': {'c1': [32.236272521830756, -110.94338137745342], 'c2': [32.23588077273965, -110.94462299506206]},
+        'g3': {'c1': [32.236248338346755, -110.9465362446941], 'c2': [32.235817764157865, -110.9477971426006]}}
 
 # store trip IDs passing through coordinate gates for each approach
-gate_trips = {}
+gate_trips = []
 
-for i in gate.keys():
-    # create list of lat and lng for inbound (adv) and outbound (ent) gates
-    lat = [gate[i]['adv'][0], gate[i]['ent'][0]]
-    lng = [gate[i]['adv'][1], gate[i]['ent'][1]]
+for k in gate.keys():
+    # create list of lat and lng for gate k
+    lat = [gate[k]['c1'][0], gate[k]['c2'][0]]
+    lng = [gate[k]['c1'][1], gate[k]['c2'][1]]
     
-    # filter trip IDs passing over inbound (adv) and outbound (ent) gates
-    ID = list(df[(df.Latitude.between(min(lat), max(lat))) & (df.Longitude.between(min(lng), max(lng)))].TripID.unique())
-    gate_trips[i] = ID
+    # filter trip IDs passing over gate k and store the result
+    trip_k = set(df[(df.Latitude.between(min(lat), max(lat))) & (df.Longitude.between(min(lng), max(lng)))].TripID.unique())
+    gate_trips.append(trip_k)
+    
+# intersection of sets gives IDs of common trips passing through all gates
+trips = sorted(list(set.intersection(all_trips, *gate_trips)))
 
-# intersection of sets gives IDs of trips passing through gates in each approach
-trips = {'EB': sorted(list(set.intersection(all_trips, gate_trips['EB']))),
-         'WB': sorted(list(set.intersection(all_trips, gate_trips['WB'])))}
+# filter df for trip IDs passing through all gates
+gdf = df.copy()[df.TripID.isin(trips)]
 
-# specify output paths
-output_path = {'EB': os.path.join(r"C:\Users\pramesh\Wejo\DZ_test", file_name[:-4] + '_EB.csv'),
-               'WB': os.path.join(r"C:\Users\pramesh\Wejo\DZ_test", file_name[:-4] + '_WB.csv')}
+# specify min-max lat and lng bounds
+lat = [gate['g1']['c1'][0], gate['g3']['c2'][0]]
+lng = [gate['g1']['c1'][1], gate['g3']['c2'][1]]
 
-# loop through each approach
-for i in trips.keys():
-    # filter trips
-    gdf = df.copy()[df.TripID.isin(trips[i])].compute()
-    
-    # specify lat and lng of adv and ent gates
-    lat = [gate[i]['adv'][0], gate[i]['ent'][0]]
-    lng = [gate[i]['adv'][1], gate[i]['ent'][1]]
-    
-    # filter trips within the gates for i approach
-    gdf = gdf[(gdf.Latitude.between(min(lat), max(lat))) & (gdf.Longitude.between(min(lng), max(lng)))]
-    
-    # save file
-    gdf.to_csv(output_path[i], index = False)
+# filter trips within these bounds
+gdf = gdf[(gdf.Latitude.between(min(lat), max(lat))) & (gdf.Longitude.between(min(lng), max(lng)))].compute()
+
+# save file
+file_output = os.path.join(r"C:\Users\pramesh\Wejo\DZ_test", file_input)
+gdf.to_csv(file_output, index = False)
