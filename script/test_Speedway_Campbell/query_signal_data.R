@@ -12,6 +12,7 @@ query <- read_file("query_signal_data_by_table.sql")
 
 # get query as data table
 DT <- as.data.table(sqlQuery(getSQLConnection('STL4'), query))
+options(digits.secs = 3)
 
 # remove device id column
 DT$DeviceId <- NULL
@@ -20,4 +21,4 @@ DT$DeviceId <- NULL
 DT[, TimeStamp := as.character(TimeStamp)]
 
 # save file
-fwrite(DT, "MaxView_08_217.txt")
+fwrite(DT, "MaxView_08_217.txt", sep = '\t')

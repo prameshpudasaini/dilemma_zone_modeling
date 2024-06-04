@@ -9,9 +9,7 @@ os.chdir(r"D:\GitHub\dilemma_Wejo")
 wejo_path = os.path.join("script/test_Speedway_Campbell/data/Wejo_Aug_Nov")
 files_wejo = os.listdir(wejo_path)
 
-# specify start and end times to filter dataset for October
-start_time, end_time = '2021-10-01 00:00:00', '2021-11-01 00:00:00'
-
+month = 8 # month to filter data for
 ldf = [] # store filtered df
 
 # loop through each file and filter data start & end times
@@ -22,7 +20,7 @@ for file in files_wejo:
     xdf.localtime = pd.to_datetime(xdf.localtime)
 
     # filter trips between start and end times
-    xdf = xdf[xdf.localtime.between(start_time, end_time, inclusive = 'left')]
+    xdf = xdf[xdf.localtime.dt.month == month]
 
     # add df to list
     ldf += [xdf]
@@ -34,5 +32,6 @@ df = pd.concat(ldf, ignore_index = True)
 df.drop(['Altitude', 'unixtime', 'accuracy'], axis = 1, inplace = True)
 
 # save file
-output_path = os.path.join("script/test_Speedway_Campbell/data", "Speedway_Campbell_Oct.txt")
+output_file = "Speedway_Campbell_" + str(month).zfill(2) + ".txt"
+output_path = os.path.join("script/test_Speedway_Campbell/data/Wejo", output_file)
 df.to_csv(output_path, index = False, sep = '\t')
