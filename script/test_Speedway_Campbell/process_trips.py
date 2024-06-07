@@ -3,6 +3,7 @@
 import os
 import numpy as np
 import pandas as pd
+import time
 
 import plotly.express as px
 import plotly.io as pio
@@ -14,21 +15,26 @@ os.chdir(r"D:\GitHub\dilemma_Wejo")
 # parameters
 # =============================================================================
 
-# coordinates of intersection stop line and longitude value at advance location
-# Note: advance location is considered 500 ft upstream of intersection stop line based on
-# Type II travel time-based DZ starting at 5.5 sec upstream of intersection stop line
-# 3 sec was added to 5.5 sec to account for the resolution of Wejo trajectory data
-coord = {'EB': {'lat_stop': 32.23599710503406, 'lon_stop': -110.94425278147006, 'lon_adv': -110.94587509416841},
-         'WB': {'lat_stop': 32.236153104983266, 'lon_stop': -110.94370075761138, 'lon_adv': -110.94207789594019}}
+# coordinates of intersection cross line, stop line, and advance location (500 ft u/s from stop line)
+coord = {'EB': {'stop': [32.236004699647296, -110.94427309956106], 
+                'cross': [32.23599934372346, -110.94422060896643], 
+                'adv': [32.23596695607203, -110.94589300691366]},
+         'WB': {'stop': [32.23615663766954, -110.94368894895453], 
+                'cross': [32.2361527696248, -110.94374039888217], 
+                'adv': [32.23615922544614, -110.94206785480095]}}
 
 # dictionaries for mapping values
 approach_direction = {0: 'NB', 90: 'EB', 180: 'SB', 270: 'WB', 360: 'NB'} # approaching direction
 signal_event = {1: 'G', 8: 'Y', 10: 'R'} # signal phase change events
 phase_parameter = {2: 'EB', 4: 'SB', 6: 'WB', 8: 'NB'} # phase parameters
 
+stop_speed_threshold = 5 # speed threshold to determine speeding
+FTS_threshold = 20 # queueing distance from intersection stop line where a vehicle is first-to-stop
+
 yellow_interval = 4
-PSL = 35 # posted speed limit
-v85 = round((PSL + 7) * 5280/3600, 2) # 85th percentile speed
+PRT = 1
+# PSL = 35 # posted speed limit
+# v85 = round((PSL + 7) * 5280/3600, 2) # 85th percentile speed
 
 # =============================================================================
 # read trajectory and signal files
@@ -55,6 +61,45 @@ mdf.localtime = pd.to_datetime(mdf.localtime)
 # functions
 # =============================================================================
 
+# function to seggregate multiple sub trips across intersection within a trip
+def segregate_sub_trips(day_df):
+    trip_dfs = [] # list to hold resulting segregated trip dfs
+    
+    # loop through each trip and add to trip dfs
+    for trip in list(day_df.TripID.unique()):
+        # filter for trip
+        xdf = day_df.copy()[day_df.TripID == trip]
+        xdf.reset_index(drop = True, inplace = True)
+        
+        # add trip change indicator variable
+        xdf['trip_change'] = xdf.LocationID - xdf.LocationID.shift(1)
+        trip_change_index = xdf[xdf['trip_change'] > 1].index.to_list()
+        
+        # check if there are multiple sub trips for the selected trip
+        if len(trip_change_index) >= 1:
+            # add 0 as starting point of trip and length of df as the ending point
+            trip_split_index = [0] + trip_change_index + [len(xdf)]
+            
+            # loop through the split points and create sub dfs
+            for i in range(len(trip_split_index) - 1):
+                start, end = trip_split_index[i], trip_split_index[i + 1]
+                sub_df = xdf.copy().iloc[start:end]
+                
+                # append i to the end of trip id
+                sub_df.TripID = (sub_df.TripID.astype(int).astype(str) + str(i)).astype(int)
+                
+                # drop trip change column and append sub df
+                sub_df.drop('trip_change', axis = 1, inplace = True)
+                trip_dfs.append(sub_df)
+        else:
+            xdf.drop('trip_change', axis = 1, inplace = True)
+            trip_dfs.append(xdf)
+            
+    result = pd.concat(trip_dfs, ignore_index = True)
+    
+    return result
+
+
 # function to round trip direction
 def round_direction(direction):
     target_values = np.array([0, 90, 180, 270, 360])
@@ -62,25 +107,28 @@ def round_direction(direction):
     # find the closest target value for each direction
     return target_values[np.abs(target_values - direction).argmin()]
 
-# function to round direction to nearest 50
-def round_distance(x):
-    return 'dist_' + str(int(np.ceil(x / 50) * 50)).zfill(3)
+# function to filter thru trips based on direction statistic
+def process_trip_direction(xdf):
+    # compute mean and standard deviation statistic of each trip's direction
+    adf = xdf.groupby('TripID')['direction'].agg(dirc_mean = 'mean', dirc_std = 'std').reset_index()
+    
+    # high st dev of trip direction indicates moving to driveways or taking U-turns
+    # filter trips with st dev of trip direction < 2
+    adf = adf[adf.dirc_std <= 2]
+    
+    # round average direction and update direction
+    adf.dirc_mean = adf.dirc_mean.apply(round_direction)
+    
+    # categorize approach based on average direction
+    adf['approach'] = adf.dirc_mean.map(approach_direction)
+    adf.drop(['dirc_mean', 'dirc_std'], axis = 1, inplace = True)
+    
+    # create a dictionary of filtered trip IDs as keys and approaching direction as values
+    records = adf.to_dict(orient = 'records')
+    thru_trips = {record['TripID']: record['approach'] for record in records}
+    
+    return thru_trips
 
-# Haversine formula to compute the distance between two points given their latitude and longitude
-def haversine(lat, lon, lat_stop, lon_stop):
-    R = 6371.0 # radius of Earth in km
-    
-    dlon = np.radians(lon - lon_stop)
-    dlat = np.radians(lat - lat_stop)
-    
-    # compute square of half the chord length between the two points
-    a = np.sin(dlat / 2)**2 + np.cos(np.radians(lat_stop)) * np.cos(np.radians(lat)) * np.sin(dlon / 2)**2
-    
-    # compute angular distance in radians
-    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-    
-    dist = R * c * 1000 * 3.28084 # conversion to meters and feet
-    return dist    
 
 # function to interpolate values for each trip ID
 def interpolate_trip(trip_df):
@@ -105,116 +153,106 @@ def interpolate_trip(trip_df):
     
     return trip_df
 
-# function to filter thru trips based on direction statistic
-def process_trip_direction(xdf):
-    # compute mean and standard deviation statistic of each trip's direction
-    adf = xdf.groupby('TripID')['direction'].agg(dirc_mean = 'mean', dirc_std = 'std').reset_index()
-    
-    # high st dev of trip direction indicates moving to driveways or taking U-turns
-    # filter trips with st dev of trip direction < 2
-    adf = adf[adf.dirc_std <= 2]
-    
-    # round average direction and update direction
-    adf.dirc_mean = adf.dirc_mean.apply(round_direction)
-    
-    # categorize approach based on average direction
-    adf['approach'] = adf.dirc_mean.map(approach_direction)
-    adf.drop(['dirc_mean', 'dirc_std'], axis = 1, inplace = True)
-    
-    # create a dictionary of filtered trip IDs as keys and approaching direction as values
-    records = adf.to_dict(orient = 'records')
-    thru_trips = {record['TripID']: record['approach'] for record in records}
-    
-    return thru_trips
 
-# function to estimate Type I DZ parameters
-def estimate_TypeI_zone(xdf):
-    # minimum perception reaction time
-    def minPerceptionReactionTime(v0):
-        prt = round(0.445 + 21.478/v0, 2)
-        return prt
+# Haversine formula to compute the distance between two points given their latitude and longitude
+def haversine(lat, lon, lat_ref, lon_ref):
+    R = 6371.0 # radius of Earth in km
     
-    # maximum deceleration rate    
-    def maxDecelerationRate(v0):
-        dec = round(np.exp(3.379 - 36.099/v0) - 9.722 + 429.692/v85, 2)
-        return -dec
+    dlon = np.radians(lon - lon_ref)
+    dlat = np.radians(lat - lat_ref)
     
-    # maximum acceleration rate
-    def maxAccelerationRate(v0):
-        acc = round(-27.91 + 760.258/v0 + 0.266*v85, 2)
-        return acc
+    # compute square of half the chord length between the two points
+    a = np.sin(dlat / 2)**2 + np.cos(np.radians(lat_ref)) * np.cos(np.radians(lat)) * np.sin(dlon / 2)**2
     
-    # minimum stopping distance
-    def minStoppingDistance(v0, prt, dec):
-        Xs = round(v0*prt + (v0**2) / (2*(abs(dec))), 0)
-        return Xs
+    # compute angular distance in radians
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     
-    # maximum clearing distance
-    def maxClearingDistance(v0, prt, acc):
-        Xc = round(v0*yellow_interval + 0.5*(acc)*((yellow_interval - prt)**2), 0)
-        return Xc
+    dist = R * c * 1000 * 3.28084 # conversion to meters and feet
+    return dist
+
+# # check haversine formula
+# haversine(32.23615283527675, -110.9432987728307, 32.23615474098094, -110.94370221489316)
+# haversine(32.236154206339286, -110.94375308222527, 32.23615474098094, -110.94370221489316)
+
+
+# function to round up distance to the nearest 50 ft
+def round_distance(x):
+    return np.ceil(x / 50) * 50
+
+# function to check whether a trip is FTS, YLR, RLR, queued, or stopped multiple times
+def check_FTS_YLR_RLR(cdf, trip_id):
+    # filter for trip id and select relevant columns
+    xdf = cdf.copy()[(cdf.TripID == trip_id)][['speed', 'Signal', 'Xi_cross', 'Xi_stop']]
+    xdf.reset_index(inplace = True, drop = True)
     
-    # IDs of stopped trips
-    zdf = xdf.copy()
-    stopped_trips = list(zdf[zdf.speed <= 5].TripID.unique())
+    # create bins of distance from intersection stop line
+    xdf['Xi_bin'] = xdf.Xi_stop.apply(round_distance)
     
-    # add stop/run decision
-    zdf.loc[zdf.TripID.isin(stopped_trips), 'decision'] = 0
-    zdf.loc[~zdf.TripID.isin(stopped_trips), 'decision'] = 1
+    # compute minimum speed in each bin
+    bdf = xdf[xdf.Xi_stop >= 0].groupby('Xi_bin')['speed'].agg(min_speed = 'min').reset_index()
     
-    # filter observations at the yellow onset
-    zdf = zdf[(xdf.TUY == 0) | (xdf.TAY == 0)]
+    # check for stops in each bin and count number of stops    
+    bdf['is_stop'] = bdf.min_speed <= stop_speed_threshold
+    num_stops = bdf.is_stop.sum()
     
-    # filter observations with speed greater than threshold
-    zdf = zdf[zdf.speed >= 15]
+    # classify the trip as FTS, YLR, RLR   
+    if num_stops == 0:
+        # for 0 stops, find the signal status corresponding to intersection cross line
+        group = str(xdf.loc[xdf.Xi_cross.idxmin(), 'Signal']) + 'LR'
     
-    # convert velocity from mph to ft/s
-    zdf.speed = round(zdf.speed * 5280/3600, 1)
+    elif num_stops <= 2:
+        # filter data with zero speed u/s of intersection stop line
+        xdf0 = xdf.copy()[(xdf.speed == 0) & (xdf.Xi_stop >= 0)]
+        # round up vehicle position to nearest 10
+        xdf0['Xi_10'] = np.ceil(xdf0.Xi_stop / 10) * 10
+        # mode gives the position of longest stop
+        mode_stop = int(xdf0.Xi_10.mode())
+
+        # check if the vehicle is within the first-to-stop distance threshold
+        if mode_stop <= FTS_threshold:
+            group = 'FTS' # first to stop
+        else:
+            group = 'Queued' # other positions in queue
     
-    # compute perception-reaction time, max deceleration, max acceleration
-    zdf['PRT'] = minPerceptionReactionTime(zdf.speed)
-    zdf['deceleration'] = maxDecelerationRate(zdf.speed)
-    zdf['acceleration'] = maxAccelerationRate(zdf.speed)
-    
-    # compute zone vehicle's position is in
-    zdf.loc[(((zdf.Xi <= zdf.Xc) & (zdf.Xc <= zdf.Xs)) | ((zdf.Xi <= zdf.Xs) & (zdf.Xs <= zdf.Xc))), 'zone'] = 'should-go'
-    zdf.loc[(((zdf.Xi >= zdf.Xc) & (zdf.Xc >= zdf.Xs)) | ((zdf.Xi >= zdf.Xs) & (zdf.Xs >= zdf.Xc))), 'zone'] = 'should-stop'
-    zdf.loc[((zdf.Xc < zdf.Xi) & (zdf.Xi < zdf.Xs)), 'zone'] = 'dilemma'
-    zdf.loc[((zdf.Xs < zdf.Xi) & (zdf.Xi < zdf.Xc)), 'zone'] = 'option'
-    
-    # covert velocity from ft/s to mph
-    zdf.speed = round(zdf.speed * 3600/5280, 1)
-    
-    return zdf
+    else:
+        # vehicle made many stops approaching the intersection
+        group = 'Stopped'
+        
+    return group
+
 
 # function to process trajectory and signal data
 def process_trajectory_signal_data(day, direction):
     # filter trips for day
-    ddf = wdf.copy()[wdf.localtime.dt.day == day]
+    print(f"\nDay, direction: {day}, {direction}")
+    day_df = wdf.copy()[wdf.localtime.dt.day == day]
     
-    # specify coordinates for direction
-    if direction == 'WB':
-        lon = [coord['WB']['lon_stop'], coord['WB']['lon_adv']] # stop and adv longitudes
-        lat_stop, lon_stop = coord['WB']['lat_stop'], coord['WB']['lon_stop'] # inputs to Haversine function
-    elif direction == 'EB':
-        lon = [coord['EB']['lon_stop'], coord['EB']['lon_adv']] # stop and adv longitudes
-        lat_stop, lon_stop = coord['EB']['lat_stop'], coord['EB']['lon_stop'] # inputs to Haversine function
+    # seggregate multiple sub trips across intersection within a trip
+    seg_df = segregate_sub_trips(day_df)
+    
+    # check length of day df and seg df are equal
+    if len(day_df) == len(seg_df):
+        print("Trips segregation OK!")
+    else:
+        print("Trips segregation ERROR!")
     
     # process trip direction and filter thru trips in given direction
-    thru_trips = process_trip_direction(ddf)
+    thru_trips = process_trip_direction(seg_df)
     thru_trips_filtered = [key for key, value in thru_trips.items() if value == direction]
     
+    print(f"Num of trips, sub trips, thru trips: {len(day_df.TripID.unique())}, {len(seg_df.TripID.unique())}, {len(thru_trips_filtered)}")
+    
     # filter trips for direction
-    fdf = ddf.copy()[ddf.TripID.isin(thru_trips_filtered)]
+    ddf = seg_df.copy()[seg_df.TripID.isin(thru_trips_filtered)]
     
     # drop direction column
-    fdf.drop('direction', axis = 1, inplace = True)
+    ddf.drop('direction', axis = 1, inplace = True)
     
     # set localtime as index for interpolating trip attributes
-    fdf.set_index('localtime', inplace = True)
+    ddf.set_index('localtime', inplace = True)
     
     # apply the interpolation function to each tripID
-    idf = fdf.groupby('TripID').apply(interpolate_trip)
+    idf = ddf.groupby('TripID').apply(interpolate_trip)
     
     # groupby adds an extra level to the index, so reset index
     idf.index = idf.index.get_level_values(1)
@@ -223,8 +261,20 @@ def process_trajectory_signal_data(day, direction):
     idf.reset_index(inplace = True)
     idf.rename(columns = {'index': 'localtime'}, inplace = True)
     
-    # filter trips between intersection stop line and advance location
-    idf = idf[idf.Longitude.between(min(lon), max(lon), inclusive = 'both')]
+    # filter trips between intersection cross line and adv location
+    coord_dirc = coord[direction] # specify coordinates for input direction
+    cross, stop, adv = coord_dirc['cross'], coord_dirc['stop'], coord_dirc['adv']
+    idf = idf[idf.Longitude.between(min(cross[1], adv[1]), max(cross[1], adv[1]), inclusive = 'both')]
+    
+    # get min, max of each trip's time and compute duration
+    trip_times = idf.groupby(['TripID']).agg({'localtime': ['min', 'max']}).reset_index()
+    trip_times.columns = ['TripID', 'start_time', 'end_time']
+    trip_times['duration'] = (trip_times.end_time - trip_times.start_time).dt.total_seconds()
+    print(f"Min, max of trips times: {trip_times.duration.min()}, {trip_times.duration.max()}")
+    
+    # # filter out trips with trip duration > 300 sec and < 5 sec
+    # trips_5_to_300 = list(trip_times[trip_times.duration.between(5, 300, inclusive = 'both')].TripID)
+    # idf = idf[idf.TripID.isin(trips_5_to_300)]
     
     # filter signal data for day and direction
     sdf = mdf.copy()[(mdf.localtime.dt.day == day) & (mdf.Approach == direction)]
@@ -250,69 +300,76 @@ def process_trajectory_signal_data(day, direction):
     cdf.Signal.ffill(inplace = True)
     
     # filter trips facing yellow indication before the intersection stop line
-    yellow_trips = list(cdf[cdf.Signal == 'Y']['TripID'].unique())
-    cdf = cdf[cdf.TripID.isin(yellow_trips)]
-    
-    # compute distance from intersection stop line using Haversine formula
-    cdf['Xi'] = cdf.apply(lambda row: haversine(row['Latitude'], row['Longitude'], lat_stop, lon_stop), axis = 1)
-    cdf.Xi = cdf.Xi.round(0)
+    yellow_onset_trips = list(cdf[(cdf.Signal == 'Y') & ((cdf.TUY == 0) | (cdf.TAY == 0))]['TripID'].unique())
+    cdf = cdf[cdf.TripID.isin(yellow_onset_trips)]
+    print(f"Num of yellow onset trips: {len(cdf.TripID.unique())}")
     
     # remove redundant cols and rows with nan values
     cdf.drop('yellowtime', axis = 1, inplace = True)
     cdf.dropna(subset = ['TripID', 'Signal'], inplace = True)
     
-    # estimate Type I DZ parameters and zones
-    zdf = estimate_TypeI_zone(cdf)
+    # compute distance from intersection cross line using Haversine formula
+    cdf['Xi_cross'] = cdf.apply(lambda row: haversine(row['Latitude'], row['Longitude'], cross[0], cross[1]), axis = 1)
+    cdf.Xi_cross = cdf.Xi_cross.round(0)
     
-    return {'cdf': cdf, 'zdf': zdf}
+    # update Xi for distance from intersection stop line
+    dist_cross_stop = round(haversine(cross[0], cross[1], stop[0], stop[1]), 0)
+    cdf['Xi_stop'] = cdf.Xi_cross - dist_cross_stop
+    
+    # initiate dictionary to store trip id and corresponding FTS, YLR, RLR
+    group = {}
+    
+    # loop through each trip to compute FTS, YLR, RLR status
+    for trip in list(cdf.TripID.unique()):
+        group[trip] = check_FTS_YLR_RLR(cdf, trip)
+        
+    # update each trip into FTS, YLR, RLR, Queued, Stopped status
+    cdf['Group'] = cdf.TripID.map(group)
+    
+    # filter for FTS, YLR, RLR groups
+    cdf = cdf[cdf.Group.isin(['FTS', 'YLR', 'RLR'])]
+    print(f"Num of FTS, YLR, RLR trips: {len(cdf.TripID.unique())}")
+    
+    # add approach direction as variable
+    cdf['Approach'] = direction
+    
+    # filter first-to-stop trips
+    df_FTS = cdf.copy()[(cdf.Group == 'FTS') & ((cdf.TUY == 0) | (cdf.TAY == 0))]
+    
+    # filter yellow and red light running trips
+    df_YLR = cdf.copy()[(cdf.Group.isin(['YLR', 'RLR']))]
+    df_YLR.reset_index(drop = True, inplace = True)
+    
+    # for YLR & RLR trips, find the time when vehicle crosses the stop line
+    df_YLR['Time_Cross'] = df_YLR.iloc[df_YLR.groupby('TripID').Xi_cross.idxmin()].TAY
+    df_YLR.Time_Cross.bfill(inplace = True)
+    
+    # filter YLR observations at yellow onset
+    df_YLR = df_YLR[(df_YLR.TUY == 0) | (df_YLR.TAY == 0)]
+    
+    return {
+        'trip_times': trip_times,
+        'group': group,
+        'df_FTS': df_FTS,
+        'df_YLR': df_YLR
+    }
 
 # =============================================================================
-# filter Wejo trips and identify approach directions
+# process Wejo trips for each day and direction
 # =============================================================================
 
 # common days for which trajectory and signal data are available
 days = set(wdf.localtime.dt.day.unique()).intersection(mdf.localtime.dt.day.unique())
 
-list_zdf, list_cdf = [], [] # store processed data for each day
+list_FTS, list_YLR = [], [] # store processed data for each day
 
 # loop through each day and combine trajectory-signal data
 for day in days:
-    for direction in ['WB', 'EB']:
-        print("Day, approach: ", day, direction)
+    for direction in ['WB', 'EB']:        
+        # process trajectory & signal info
+        result = process_trajectory_signal_data(day, direction)
+        list_FTS.append(result['df_FTS'])
+        list_YLR.append(result['df_YLR'])
         
-        # process trajectory & signal info and estimate Type I DZ parameters
-        data = process_trajectory_signal_data(day, direction)
-        zdf, cdf = data['zdf'], data['cdf']
-        
-        # add direction as variables
-        zdf['Approach'] = direction
-        cdf['Approach'] = direction
-        
-        list_zdf += [zdf]
-        list_cdf += [cdf]
-
-final_zdf = pd.concat(list_zdf, ignore_index = True)
-final_cdf = pd.concat(list_cdf, ignore_index = True)
-
-# save file
-output_path = os.path.join()
-final_cdf.to_csv("script/test_Speedway_Campbell/data/Wejo/Speedway_Campbell_08_trajectory.txt", index = False, sep = '\t')
-
-# # function to plot trajectory and signal information
-# def plotTrajectorySignal(trip_id):
-#     # filter df with trajectory and signal info for trip id
-#     tdf = cdf.copy()[cdf.TripID == trip_id]
-
-#     sig_color = {'G': 'green', 'Y': 'orange', 'R': 'red'}
-    
-#     fig = px.scatter(
-#         tdf,
-#         x = 'Xi',
-#         y = 'localtime',
-#         color = 'Signal',
-#         hover_data = ['TripID', 'LocationID'],
-#         color_discrete_map = sig_color
-#     )
-    
-#     fig.update_traces(marker = dict(size = 10))
-#     fig.show()
+df_FTS = pd.concat(list_FTS, ignore_index = True)
+df_YLR = pd.concat(list_YLR, ignore_index = True)
