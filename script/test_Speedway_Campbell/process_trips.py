@@ -28,7 +28,8 @@ approach_direction = {0: 'NB', 90: 'EB', 180: 'SB', 270: 'WB', 360: 'NB'} # appr
 signal_event = {1: 'G', 8: 'Y', 10: 'R'} # signal phase change events
 phase_parameter = {2: 'EB', 4: 'SB', 6: 'WB', 8: 'NB'} # phase parameters
 
-stop_speed_threshold = 5 # speed threshold to determine speeding
+stop_speed_threshold = 5 # speed threshold to determine stopping
+stop_dist_threshold = 300 # distance up to which stopping is to be considered
 FTS_threshold = 20 # queueing distance from intersection stop line where a vehicle is first-to-stop
 
 yellow_interval = 4
@@ -193,6 +194,7 @@ def check_FTS_YLR_RLR(cdf, trip_id):
     
     # check for stops in each bin and count number of stops    
     bdf['is_stop'] = bdf.min_speed <= stop_speed_threshold
+    bdf = bdf[bdf.Xi_bin <= stop_dist_threshold] # only consider stops before 400 ft
     num_stops = bdf.is_stop.sum()
     
     # classify the trip as FTS, YLR, RLR   
@@ -202,7 +204,7 @@ def check_FTS_YLR_RLR(cdf, trip_id):
     
     elif num_stops <= 2:
         # filter data with zero speed u/s of intersection stop line
-        xdf0 = xdf.copy()[(xdf.speed == 0) & (xdf.Xi_stop >= 0)]
+        xdf0 = xdf.copy()[(xdf.speed == 0) & (xdf.Xi_stop >= -10)]
         # round up vehicle position to nearest 10
         xdf0['Xi_10'] = np.ceil(xdf0.Xi_stop / 10) * 10
         # mode gives the position of longest stop
@@ -321,23 +323,25 @@ def process_trajectory_signal_data(day, direction):
     
     # loop through each trip to compute FTS, YLR, RLR status
     for trip in list(cdf.TripID.unique()):
+        # print(trip)
         group[trip] = check_FTS_YLR_RLR(cdf, trip)
         
-    # update each trip into FTS, YLR, RLR, Queued, Stopped status
-    cdf['Group'] = cdf.TripID.map(group)
+    # update each trip into FTS, YLR, RLR, Queued, Stopped groups
+    gdf = cdf.copy()
+    gdf['Group'] = gdf.TripID.map(group)
     
     # filter for FTS, YLR, RLR groups
-    cdf = cdf[cdf.Group.isin(['FTS', 'YLR', 'RLR'])]
-    print(f"Num of FTS, YLR, RLR trips: {len(cdf.TripID.unique())}")
+    gdf = gdf[gdf.Group.isin(['FTS', 'YLR', 'RLR'])]
+    print(f"Num of FTS, YLR, RLR trips: {len(gdf.TripID.unique())}")
     
     # add approach direction as variable
-    cdf['Approach'] = direction
+    gdf['Approach'] = direction
     
     # filter first-to-stop trips
-    df_FTS = cdf.copy()[(cdf.Group == 'FTS') & ((cdf.TUY == 0) | (cdf.TAY == 0))]
+    df_FTS = gdf.copy()[(gdf.Group == 'FTS') & ((gdf.TUY == 0) | (gdf.TAY == 0))]
     
     # filter yellow and red light running trips
-    df_YLR = cdf.copy()[(cdf.Group.isin(['YLR', 'RLR']))]
+    df_YLR = gdf.copy()[(gdf.Group.isin(['YLR', 'RLR']))]
     df_YLR.reset_index(drop = True, inplace = True)
     
     # for YLR & RLR trips, find the time when vehicle crosses the stop line
@@ -349,6 +353,7 @@ def process_trajectory_signal_data(day, direction):
     
     return {
         'trip_times': trip_times,
+        'cdf': cdf,
         'group': group,
         'df_FTS': df_FTS,
         'df_YLR': df_YLR
@@ -361,15 +366,76 @@ def process_trajectory_signal_data(day, direction):
 # common days for which trajectory and signal data are available
 days = set(wdf.localtime.dt.day.unique()).intersection(mdf.localtime.dt.day.unique())
 
-list_FTS, list_YLR = [], [] # store processed data for each day
+list_cdf, list_FTS, list_YLR = [], [], [] # store processed data for each day
 
 # loop through each day and combine trajectory-signal data
 for day in days:
     for direction in ['WB', 'EB']:        
         # process trajectory & signal info
         result = process_trajectory_signal_data(day, direction)
+        
+        # append result to list
+        list_cdf.append(result['cdf'])
         list_FTS.append(result['df_FTS'])
         list_YLR.append(result['df_YLR'])
-        
+
+# concatenate dfs from each list
+cdf = pd.concat(list_cdf, ignore_index = True)       
 df_FTS = pd.concat(list_FTS, ignore_index = True)
 df_YLR = pd.concat(list_YLR, ignore_index = True)
+
+# save file
+cdf.to_csv("script/test_Speedway_Campbell/data/Wejo/08_217_WM.txt", index = False, sep = '\t')
+df_FTS.to_csv("script/test_Speedway_Campbell/data/Wejo/08_217_FTS.txt", index = False, sep = '\t')
+df_YLR.to_csv("script/test_Speedway_Campbell/data/Wejo/08_217_YLR.txt", index = False, sep = '\t')
+
+
+# function to plot trajectory and signal information
+def plotTrajectorySignal(trip_id):
+    # filter df with trajectory and signal info for trip id
+    tdf = cdf.copy()[cdf.TripID == trip_id]
+
+    fig = px.scatter(
+        tdf,
+        x = 'Xi_stop',
+        y = 'localtime',
+        color = 'Signal',
+        hover_data = ['TripID', 'LocationID'],
+        color_discrete_map = {'G': 'green', 'Y': 'orange', 'R': 'red'}
+    )
+    
+    fig.update_traces(marker = dict(size = 10))
+    
+    lon_stop = 0
+    
+    # add vertical line at stop line
+    fig.add_shape(
+        type = 'line',
+        x0 = lon_stop,
+        y0 = tdf['localtime'].min(),
+        x1 = lon_stop,
+        y1 = tdf['localtime'].max(),
+        line = dict(color = 'black', width = 2, dash = 'dash')
+    )
+    fig.show()
+    
+px.scatter(df_FTS, x = 'Xi_stop', y = 'speed').show()
+    
+# for trip_id in list(cdf.TripID.unique()):
+#     plotTrajectorySignal(trip_id)
+#     time.sleep(1)
+
+# def compute_deceleration(v0, Xi):
+#     v0 = v0 * 5280/3600
+#     dec = round((v0**2) / (2 * (Xi - v0*PRT)), 2)
+#     return dec
+
+# def compute_acceleration(v0, Xi, t):
+#     v0 = v0 * 5280/3600
+#     acc = round(2 * (Xi - v0 * t) / (t - PRT) ** 2, 2)
+#     return acc
+
+# compute_deceleration(38.5, 364)
+# compute_acceleration(33, 109, 2.35)
+# compute_deceleration(46.1, 462)
+# compute_acceleration(39.3, 48, 0.9)
