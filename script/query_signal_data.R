@@ -14,11 +14,13 @@ query <- read_file("query_signal_data_by_table.sql")
 DT <- as.data.table(sqlQuery(getSQLConnection('STL4'), query))
 options(digits.secs = 3)
 
-# remove device id column
-DT$DeviceId <- NULL
-
 # convert timestamp column to character to preserve time zone
 DT[, TimeStamp := as.character(TimeStamp)]
 
 # save file
-fwrite(DT, "MaxView_08_217.txt", sep = '\t')
+# fwrite(DT, "MaxView_08_586.txt", sep = '\t') # Broadway & Kolb (40, 40)
+# fwrite(DT, "MaxView_08_618.txt", sep = '\t') # 22nd & Kolb (40, 40)
+# fwrite(DT, "MaxView_08_444.txt", sep = '\t') # Prince & 1st (35, 35)
+# fwrite(DT, "MaxView_08_446.txt", sep = '\t') # Prince & Campbell (35, 35)
+# fwrite(DT, "MaxView_08_217.txt", sep = '\t') # Speedway & Campbell (35, 35)
+# fwrite(DT, "MaxView_08_540.txt", sep = '\t') # 6th & Euclid (30, 30)
