@@ -191,7 +191,7 @@ def haversine(lat, lon, lat_ref, lon_ref, dirc):
 # function to get distance between intersection stop and cross lines for input node
 def node_geometry(node, dirc):
     xdf = pd.read_csv("ignore/node_geometry.csv")
-    xdf = xdf[(xdf.ID == node) & (xdf.Approach == dirc)]
+    xdf = xdf[(xdf.Node == node) & (xdf.Approach == dirc)]
     dist_stop_cross = xdf.dist_stop_cross.values[0]
     int_cross_length = xdf.int_cross_length.values[0]
     return {'dist_stop_cross': dist_stop_cross, 'int_cross_length': int_cross_length}
