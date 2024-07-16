@@ -10,32 +10,58 @@ pio.renderers.default = 'browser'
 
 os.chdir(r"D:\GitHub\dilemma_Wejo")
 
+# =============================================================================
+# load and prepare datasets
+# =============================================================================
+
+# read datasets with stop/go trips
+GLR = pd.read_csv("ignore/Wejo/trips_stop_go/GLR_filtered.txt", sep = '\t') # GLR trips
+FTS = pd.read_csv("ignore/Wejo/trips_stop_go/FTS_filtered.txt", sep = '\t') # FTS trips
+YLR = pd.read_csv("ignore/Wejo/trips_stop_go/YLR_filtered.txt", sep = '\t') # YLR trips
+RLR = pd.read_csv("ignore/Wejo/trips_stop_go/RLR_filtered.txt", sep = '\t') # RLR trips
+
+# combine GLR with FTS data
+FTS = pd.concat([FTS, GLR], ignore_index = True)
+
+# filter out FTS trips stopping beyond stop line
+# filter out YLR trips with yellow onset beyond stop line
+FTS = FTS[FTS.stop_dist >= -10]
+YLR = YLR[YLR.Xi >= -10]
+
+# =============================================================================
+# speed binning and processing features
+# =============================================================================
+
 # specify parameters for quantile binning
 num_bins, quantile_Xs, quantile_Xc = 40, 0.00, 1.00
 
-# =============================================================================
-# functions
-# =============================================================================
-
 # function to create bins based on adaptive binning of quantiles
-def process_speed_bin(xdf, group):
-    # assign variable name and quantile to compute based on FTS/YLR group
-    if group == 'FTS':
-        var_name, q = 'Xs', quantile_Xs
-    else:
-        var_name, q = 'Xc', quantile_Xc
-    
+def process_speed_bin(zdf, group):
+    xdf = zdf.copy()
+
     # process speed data
     xdf['speed'] = xdf.speed * 5280/3600 # mph to ft/s
     xdf['speed_sq'] = xdf.speed ** 2 # square of speed
     
     # compute mean and st dev; filter out observations beyond 2 st dev
     mean, std = xdf.speed.mean(), xdf.speed.std()
-    xdf = xdf.copy()[xdf.speed.between(mean - 2*std, mean + 2*std, inclusive = 'both')]
+    xdf = xdf[xdf.speed.between(mean - 2*std, mean + 2*std, inclusive = 'both')]
     
     # adaptive binning of data by speed variable
     xdf['speed_bin'] = pd.qcut(xdf.speed, q = num_bins, duplicates = 'drop')
     
+    # assign variable name and quantile to compute based on FTS/YLR group
+    # add limiting values by speed bin as variable
+    if group == 'FTS':
+        var_name, q = 'Xs', quantile_Xs
+        limit_values = xdf.groupby('speed_bin').Xi.transform('min')
+    else:
+        var_name, q = 'Xc', quantile_Xc
+        limit_values = xdf.groupby('speed_bin').Xi.transform('max')
+    
+    # create a df of limit values
+    xdf['limit_Xi'] = (xdf.Xi == limit_values).astype(int)
+
     # group by speed bin and compute quantile
     gdf = xdf.groupby('speed_bin')['Xi'].quantile(q).reset_index(name = var_name)
 
@@ -76,31 +102,6 @@ def geometry_features(xdf):
 
     return xdf
 
-# function to model median Xs or Xc using quantile regression
-def quantile_regression(X, q = 0.5):
-    model = sm.QuantReg(y, X).fit(q = q)
-    print(model.summary())
-    return model
-
-
-# =============================================================================
-# load and prepare datasets
-# =============================================================================
-
-# read datasets with stop/go trips
-GLR = pd.read_csv("ignore/Wejo/trips_stop_go/GLR_filtered.txt", sep = '\t') # GLR trips
-FTS = pd.read_csv("ignore/Wejo/trips_stop_go/FTS_filtered.txt", sep = '\t') # FTS trips
-YLR = pd.read_csv("ignore/Wejo/trips_stop_go/YLR_filtered.txt", sep = '\t') # YLR trips
-RLR = pd.read_csv("ignore/Wejo/trips_stop_go/RLR_filtered.txt", sep = '\t') # RLR trips
-
-# combine GLR with FTS data
-FTS = pd.concat([FTS, GLR], ignore_index = True)
-
-# filter out FTS trips stopping beyond stop line
-# filter out YLR trips with yellow onset beyond stop line
-FTS = FTS[FTS.stop_dist >= -10]
-YLR = YLR[YLR.Xi >= -10]
-
 # process speed bins for FTS/YLR datasets
 fdf = process_speed_bin(FTS, 'FTS')
 ydf = process_speed_bin(YLR, 'YLR')
@@ -112,13 +113,45 @@ ydf = geometry_features(ydf)
 # px.scatter(fdf, x = 'Xs', y = 'speed').update_traces(marker = dict(size = 7, symbol = 'circle')).show()
 # px.scatter(ydf, x = 'Xc', y = 'speed').update_traces(marker = dict(size = 7, symbol = 'circle')).show()
 
-# px.scatter(fdf, x = 'Xi', y = 'Xs').update_traces(marker = dict(size = 7, symbol = 'circle')).show()
-# px.scatter(ydf, x = 'Xi', y = 'Xc').update_traces(marker = dict(size = 7, symbol = 'circle')).show()
+plot_Xs = fdf.copy()[fdf.limit_Xi == 1][['Xi', 'speed']]
+plot_Xs.speed = round(plot_Xs.speed*3600/5280, 1)
+
+plot_Xc = ydf.copy()[ydf.limit_Xi == 1][['Xi', 'speed']]
+plot_Xc.speed = round(plot_Xc.speed*3600/5280, 1)
+
+# create subplots of Xi vs speed for FTS and YLR
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize = (12, 6))
+
+ax1.scatter(FTS.Xi, FTS.speed, color = 'black', marker = 'o', facecolors = 'none', alpha = 0.6, label = 'FTS vehicles')
+ax1.scatter(plot_Xs.Xi, plot_Xs.speed, color = 'black', marker = 'o', label = 'FTS vehicles with $X_s$')
+ax1.set_title('(a) First-to-stop (FTS) vehicles', fontsize = 14, fontweight = 'bold')
+ax1.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax1.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax1.tick_params(axis = 'both', which = 'major', labelsize = 12)
+ax1.legend(loc = 'lower right')
+
+ax2.scatter(YLR.Xi, YLR.speed, color = 'black', marker = 's', facecolors = 'none', alpha = 0.6, label = 'YLR')
+ax2.scatter(plot_Xc.Xi, plot_Xc.speed, color = 'black', marker = 's', label = 'YLR vehicles with $X_c$')
+ax2.set_title('(b) Yellow light running (YLR) vehicles', fontsize = 14, fontweight = 'bold')
+ax2.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax2.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax2.tick_params(axis = 'both', which = 'major', labelsize = 12)
+ax2.legend(loc = 'lower right')
+
+plt.tight_layout(pad = 1)
+plt.savefig('output/plot_Xs_Xc.png', dpi = 600)
+plt.show()
 
 
 # =============================================================================
 # quantile regression models for Xs
 # =============================================================================
+
+# function to model median Xs or Xc using quantile regression
+def quantile_regression(X, q = 0.5):
+    model = sm.QuantReg(y, X).fit(q = q)
+    print(model.summary())
+    return model
 
 # target and predictor variables
 X = fdf.copy()
@@ -144,18 +177,35 @@ model_Xs = quantile_regression(X[['speed', 'speed_sq']])
 df_Xs = model_Xs.summary2().tables[1]
 df_Xs.to_csv("output/quantile_regression_model_Xs.csv")
 
+# 85th quantile model for Xs
+model_Xs_q15 = quantile_regression(X[['speed', 'speed_sq']], q = 0.15)
+df_Xs_q15 = model_Xs_q15.summary2().tables[1]
+df_Xs_q15.to_csv("output/quantile_regression_model_Xs_q15.csv")    
+        
 # create dataset for fitting quantile regression line
-y_pred = np.linspace(FTS.speed.min(), FTS.speed.max(), 100)
-X_pred = pd.DataFrame({'speed': y_pred, 'speed_sq': y_pred**2})
-predictions = model_Xs.predict(X_pred)
+y_val = np.linspace(FTS.speed.min()*5280/3600, FTS.speed.max()*5280/3600, 100)
+X_val = pd.DataFrame({'speed': y_val, 'speed_sq': y_val**2})
+X_pred_Xs = model_Xs.predict(X_val)
+y_val_Xs = np.round(y_val*3600/5280, decimals = 1)
 
-# plot FTS with computed Xs and fit quantile regression line
-plt.scatter(FTS.Xi, FTS.speed, alpha = 0.5, label = 'Data')
-plt.plot(predictions, y_pred, color = 'red', label = 'Median regression')
-plt.xlabel('Minimum stopping distance (ft)')
-plt.ylabel('Speed (ft/s)')
-plt.legend()
-plt.show()
+# # plot FTS with computed Xs and fit quantile regression line
+# plt.figure(figsize = (8, 6))
+# plt.scatter(FTS.Xi, FTS.speed, color = 'black', alpha = 0.6, label = 'First-to-stop vehicles')
+# plt.scatter(plot_Xs.Xi, plot_Xs.speed, color = 'blue', label = 'First-to-stop vehicles with $X_s$')
+# plt.plot(X_pred_Xs, y_val_Xs, color = 'red', label = 'Quantile regression model for $X_s$')
+# plt.xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+# plt.ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+# plt.xticks(fontsize = 12)
+# plt.yticks(fontsize = 12)
+
+# legend = plt.legend(loc = 'upper center', fontsize = 12, bbox_to_anchor = (0.5, 1.13), ncol = 2)
+# frame = legend.get_frame()
+# frame.set_facecolor('white')
+# frame.set_edgecolor('white')
+
+# plt.tight_layout(pad = 0)
+# plt.savefig('output/quantile_regression_model_Xs.png', dpi = 600)
+# plt.show()
 
 
 # =============================================================================
@@ -191,17 +241,59 @@ model_Xc = quantile_regression(X[['intercept', 'speed']])
 df_Xc = model_Xc.summary2().tables[1]
 df_Xc.to_csv("output/quantile_regression_model_Xc.csv")
 
-# create dataset for fitting quantile regression line
-y_pred = np.linspace(YLR.speed.min(), YLR.speed.max(), 100)
-X_pred = pd.DataFrame({'intercept': 1, 'speed': y_pred})
-predictions = model_Xc.predict(X_pred)
+# 85th quantile model for Xc
+model_Xc_q85 = quantile_regression(X[['intercept', 'speed']], q = 0.85)
+df_Xc_q85 = model_Xc_q85.summary2().tables[1]
+df_Xc_q85.to_csv("output/quantile_regression_model_Xc_q85.csv")
 
-# plot FTS with computed Xs and fit quantile regression line
-plt.scatter(YLR.Xi, YLR.speed, alpha = 0.5, label = 'Data')
-plt.plot(predictions, y_pred, color = 'red', label = 'Median regression')
-plt.xlabel('Maximum clearing distance (ft)')
-plt.ylabel('Speed (ft/s)')
-plt.legend()
+# create dataset for fitting quantile regression line
+y_val = np.linspace(YLR.speed.min()*5280/3600, YLR.speed.max()*5280/3600, 100)
+X_val = pd.DataFrame({'intercept': 1, 'speed': y_val})
+X_pred_Xc = model_Xc.predict(X_val)
+y_val_Xc = np.round(y_val*3600/5280, decimals = 1)
+
+# # plot FTS with computed Xs and fit quantile regression line
+# plt.figure(figsize = (8, 6))
+# plt.scatter(YLR.Xi, YLR.speed, color = 'black', marker = 's', alpha = 0.6, label = 'Yellow light running vehicles')
+# plt.scatter(plot_Xc.Xi, plot_Xc.speed, color = 'blue', marker = 's', label = 'Yellow light running vehicles with $X_c$')
+# plt.plot(X_pred_Xc, y_val_Xc, color = 'red', label = 'Quantile regression model for $X_c$')
+# plt.xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+# plt.ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+# plt.xticks(fontsize = 12)
+# plt.yticks(fontsize = 12)
+
+# legend = plt.legend(loc = 'upper center', fontsize = 12, bbox_to_anchor = (0.5, 1.13), ncol = 2)
+# frame = legend.get_frame()
+# frame.set_facecolor('white')
+# frame.set_edgecolor('white')
+
+# plt.tight_layout(pad = 0)
+# plt.savefig('output/quantile_regression_model_Xc.png', dpi = 600)
+# plt.show()
+
+# create subplots of Xi vs speed for FTS and YLR
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize = (12, 6))
+
+ax1.scatter(FTS.Xi, FTS.speed, color = 'black', marker = 'o', facecolors = 'none', alpha = 0.6, label = 'FTS vehicles')
+ax1.scatter(plot_Xs.Xi, plot_Xs.speed, color = 'black', marker = 'o', label = 'FTS vehicles with $X_s$')
+ax1.plot(X_pred_Xs, y_val_Xs, color = 'red', linewidth = 2, label = 'Median regression for $X_s$')
+ax1.set_title('(a) First-to-stop (FTS) vehicles', fontsize = 14, fontweight = 'bold')
+ax1.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax1.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax1.tick_params(axis = 'both', which = 'major', labelsize = 12)
+ax1.legend(loc = 'lower right')
+
+ax2.scatter(YLR.Xi, YLR.speed, color = 'black', marker = 's', facecolors = 'none', alpha = 0.6, label = 'YLR')
+ax2.scatter(plot_Xc.Xi, plot_Xc.speed, color = 'black', marker = 's', label = 'YLR vehicles with $X_c$')
+ax2.plot(X_pred_Xc, y_val_Xc, color = 'red', linewidth = 2, label = 'Median regression model for $X_c$')
+ax2.set_title('(b) Yellow light running (YLR) vehicles', fontsize = 14, fontweight = 'bold')
+ax2.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax2.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax2.tick_params(axis = 'both', which = 'major', labelsize = 12)
+ax2.legend(loc = 'lower right')
+
+plt.tight_layout(pad = 1)
+plt.savefig('output/model_Xs_Xc.png', dpi = 600)
 plt.show()
 
 
@@ -213,15 +305,20 @@ plt.show()
 def get_predicted_quantile_distance(xdf, group):
     # add variables
     xdf['Group'] = group # group of FTS, YLR, RLR
+    xdf['speed_mph'] = xdf.speed
+    xdf.speed = round(xdf.speed * 5280/3600, 1)
     xdf['speed_sq'] = xdf.speed**2 # square of speed
     xdf['intercept'] = 1
     
     # add predicted Xs and Xc from quantile models
     xdf['Xs'] = round(model_Xs.predict(xdf[['speed', 'speed_sq']]), 0)
+    xdf['Xs_q15'] = round(model_Xs_q15.predict(xdf[['speed', 'speed_sq']]), 0)
     xdf['Xc'] = round(model_Xc.predict(xdf[['intercept', 'speed']]), 0)
+    xdf['Xc_q85'] = round(model_Xc_q85.predict(xdf[['intercept', 'speed']]), 0)
     
     # select relevant columns
-    xdf = xdf[['Node', 'Approach', 'ID', 'TripID', 'localtime', 'speed', 'Xi', 'Xs', 'Xc', 'Group']]
+    xdf = xdf[['Node', 'Approach', 'ID', 'TripID', 'localtime', 'speed_mph', 'speed', 'Xi', 
+               'Xs', 'Xc', 'Xs_q15', 'Xc_q85', 'Group']]
     return xdf
 
 # add predicted Xs and Xc to FTS, YLR, RLR datasets
