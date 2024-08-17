@@ -18,9 +18,4 @@ options(digits.secs = 3)
 DT[, TimeStamp := as.character(TimeStamp)]
 
 # save file
-# fwrite(DT, "MaxView_08_586.txt", sep = '\t') # Broadway & Kolb (40, 40)
-# fwrite(DT, "MaxView_08_618.txt", sep = '\t') # 22nd & Kolb (40, 40)
-# fwrite(DT, "MaxView_08_444.txt", sep = '\t') # Prince & 1st (35, 35)
-# fwrite(DT, "MaxView_08_446.txt", sep = '\t') # Prince & Campbell (35, 35)
-# fwrite(DT, "MaxView_08_217.txt", sep = '\t') # Speedway & Campbell (35, 35)
-# fwrite(DT, "MaxView_08_540.txt", sep = '\t') # 6th & Euclid (30, 30)
+fwrite(DT, "MaxView_Aug_Sep_Oct_216_217_517_618.txt", sep = '\t')
