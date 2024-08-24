@@ -40,7 +40,7 @@ stop_speed_threshold = 5 # speed threshold to determine stopping
 FTS_threshold = 20 # queueing distance from intersection stop line where a vehicle is first-to-stop
 
 # distances for filtering trajectory points at intersection approach
-dist_adv, dist_cross = 500, 20
+dist_adv = 500
 
 # =============================================================================
 # functions
@@ -207,6 +207,7 @@ def process_trajectory_data(dwdf, node, dirc):
     tddf.columns = ['TripID', 'Xi_cross', 'Xi_adv']
     
     # filter complete trips with trajectories between adv and crossing points
+    dist_cross = 20 if node in [216, 217] else 40
     tddf = tddf[(tddf.Xi_adv >= dist_adv) & (tddf.Xi_cross <= -(dist_cross))]
     idf = idf[idf.TripID.isin(list(tddf.TripID.unique()))]
     
@@ -258,7 +259,7 @@ def identify_FTS_YLR_RLR(cdf, trip_id):
     tdf['bin'] = tdf.Xi.apply(lambda x: np.ceil(x / 50) * 50)
     
     # compute minimum speed in each bin
-    bdf = tdf.groupby('bin')['speed'].agg(min_speed = 'min').reset_index()
+    bdf = tdf[tdf.Xi >= 0].groupby('bin')['speed'].agg(min_speed = 'min').reset_index()
     
     # check for stops in each bin and count number of stops    
     bdf['is_stop'] = bdf.min_speed <= stop_speed_threshold
@@ -354,7 +355,7 @@ for node in coord.keys():
 
         # concatenate data in list for input node and dirc and save file
         final_df = pd.concat(list_cdf, ignore_index = True)
-        path_output = os.path.join("ignore/Wejo/processed_data", str(node) + "_" + dirc + ".txt")
+        path_output = os.path.join("ignore/Wejo/processed_trips", str(node) + "_" + dirc + ".txt")
         final_df.to_csv(path_output, index = False, sep = '\t')
             
 
