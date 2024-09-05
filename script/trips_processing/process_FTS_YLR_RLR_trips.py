@@ -5,47 +5,38 @@ import plotly.express as px
 import plotly.io as pio
 pio.renderers.default = 'browser'
 
-os.chdir(r"D:\GitHub\dilemma_Wejo")
+os.chdir(r"D:\GitHub\dilemma_zone_modeling")
 
 # read dataset with stop/go trips
-df = pd.read_csv("ignore/Wejo/trips_stop_go/trips_stop_go.txt", sep = '\t')
+df = pd.read_csv("ignore/Wejo/trips_analysis/processed_trips.txt", sep = '\t')
 
-# read node geometry data
-ndf = pd.read_csv("ignore/node_geometry.csv")
+# update localtime to pandas datetime and add day variable
+df.localtime = pd.to_datetime(df.localtime)
+df['Month'] = df.localtime.dt.month
+df['Day'] = df.localtime.dt.day
 
-# =============================================================================
-# count trips and create list of trips by group
-# =============================================================================
+# add site ID variable for node and approach
+df['SiteID'] = df.Node.astype(str) + df.Approach
 
-# create dataset for counting number of trips
-cdf = df.copy()[['Node', 'Approach', 'Day', 'TripID', 'Group']]
-cdf.drop_duplicates(inplace = True) # drop all duplicates
+# add speed limit info to dataset
+df.loc[df.Node.isin([216, 217]), 'Speed_limit'] = 35
+df.loc[df.Node.isin([517, 618]), 'Speed_limit'] = 40
 
-# count number of trips by group and node
-count_trips_group = cdf['Group'].value_counts().reset_index()
-count_trips_node = cdf['Node'].value_counts().reset_index()
+group_cols = ['Node', 'Approach', 'Month', 'Day', 'TripID']
 
-group_cols = ['Node', 'Approach', 'Day', 'TripID']
+# parameters
+speed_diff_threshold = 20 # threshold for filtering out yellow onset speed below speed limit
+num_bins_threshold = 20
 
-# create list of trips by group with details on: node, approach, day, trip ID
-def list_trips_by_group(group):
-    xdf = cdf.copy()[cdf.Group == group]
-    trips = [xdf[group_cols].iloc[i].tolist() for i in range(len(xdf))]
-    return trips
-
-trips_GLR = list_trips_by_group('GLR')
-trips_FTS = list_trips_by_group('FTS')
-trips_YLR = list_trips_by_group('YLR')
-trips_RLR = list_trips_by_group('RLR')
 
 # =============================================================================
 # functions
 # =============================================================================
 
 # function to plot trajectory and signal information
-def plotTrajectorySignal(node, dirc, day, trip_id):
+def plotTrajectorySignal(node, dirc, month, day, trip_id):
     # filter df with trajectory and signal info for trip id
-    trip_df = df.copy()[(df.Node == node) & (df.Approach == dirc) & (df.Day == day) & (df.TripID == trip_id)]
+    trip_df = df.copy()[(df.Node == node) & (df.Approach == dirc) & (df.Month == month) & (df.Day == day) & (df.TripID == trip_id)]
 
     fig = px.scatter(
         trip_df,
@@ -56,7 +47,7 @@ def plotTrajectorySignal(node, dirc, day, trip_id):
         color_discrete_map = {'G': 'green', 'Y': 'orange', 'R': 'red'}
     )
     fig.update_traces(marker = dict(size = 10))
-    fig.update_layout(title = str(node) + ', ' + dirc + ', ' + str(day) + ', ' + str(int(trip_id)))
+    fig.update_layout(title = str(node) + ', ' + dirc + ', ' + str(month) + ', ' + str(day) + ', ' + str(int(trip_id)))
     
     # add vertical line at stop line
     fig.add_shape(
@@ -69,64 +60,9 @@ def plotTrajectorySignal(node, dirc, day, trip_id):
     )
     fig.show()
 
-
-# =============================================================================
-# process GLR trips (trips with stopping position beyond intersection stop line)
-# =============================================================================
-
-# filter GLR trips
-GLR = df.copy()[df.Group == 'GLR']
-
-# find the longest stopping position of all GLR trips
-glr_stop_dist = GLR.groupby(group_cols)['Xi'].agg(lambda x: x.mode().iloc[0]).reset_index()
-glr_stop_dist.rename(columns = {'Xi': 'stop_dist'}, inplace = True) # rename Xi column
-
-# # plot stopping position by node and approach
-# fig_stop_dist = px.scatter(
-#     glr_stop_dist,
-#     x = 'stop_dist',
-#     y = 'Node',
-#     color = 'Approach'
-# )
-# fig_stop_dist.update_traces(marker = dict(size = 20))
-# fig_stop_dist.show()
-
-# # check trajectory for GLR data
-# for i in range(0, len(trips_GLR)):
-#     node, dirc, day, trip_id = glr_list[i]
-#     plotTrajectorySignal(node, dirc, day, trip_id)
-
-# plotTrajectorySignal(*trips_GLR[1])
-
-# Note: analysis of plots show that GLR were FTS vehicles that stopped beyond
-# the intersection stop line.
-
-# find time after yellow when the vehicle comes to stopping position
-glr_stop_time = GLR.groupby(group_cols).apply(lambda x: x.loc[x.speed == 0].iloc[0]['TAY']).reset_index(name = 'stop_time')
-
-# filter yellow onset GLR trips
-GLR = GLR[(GLR.TUY == 0) | (GLR.TAY == 0)]
-
-# add speed limit data and filter out yellow onset speed 15 miles below speed limit
-GLR = pd.merge(GLR, ndf[['Node', 'Approach', 'Speed_limit']], on = ['Node', 'Approach'], how = 'left')
-GLR['Speed_diff'] = GLR.speed - GLR.Speed_limit # difference between yellow onset speed and speed limit
-GLR = GLR[GLR.Speed_diff >= -15] # filter out lower speeds
-
-# add stopping position and time after yellow to GLR data
-GLR = pd.merge(GLR, glr_stop_dist, on = group_cols, how = 'left')
-GLR = pd.merge(GLR, glr_stop_time, on = group_cols, how = 'left')
-
-# check deceleration based on observed time to stop and speed
-GLR['Dec'] = round(GLR.speed*(5280/3600) / GLR.stop_time, 2)
-
-# filter out data with stopping position beyond 20 ft of intersection stop line
-# filter out data with yellow onset distance less than 100 ft
-# this considers GLR data as FTS, given the spatial accuracy of trajectory data
-GLR = GLR[(GLR.stop_dist >= -20) & (GLR.Xi >= 100)]
-
-# drop redundant columns and save file
-GLR.drop(['Signal', 'TUY', 'TAY', 'Group', 'Day', 'Speed_limit', 'Speed_diff', 'Dec'], axis = 1, inplace = True)
-GLR.to_csv("ignore/Wejo/trips_stop_go/GLR_filtered.txt", sep = '\t', index = False)
+# test trajectories
+# plotTrajectorySignal(618, 'NB', 8, 28, 380) # stopping beyond stop line
+# plotTrajectorySignal(517, 'WB', 8, 17, 287) # stopping beyond stop line
 
 
 # =============================================================================
@@ -140,25 +76,15 @@ FTS = df.copy()[(df.Group == 'FTS')]
 fts_stop_dist = FTS.groupby(group_cols)['Xi'].agg(lambda x: x.mode().iloc[0]).reset_index()
 fts_stop_dist.rename(columns = {'Xi': 'stop_dist'}, inplace = True) # rename Xi column
 
-# # test to check IndexError: single positional indexer is out-of-bounds
-# xdf = FTS.copy()[(FTS.Node == 540) & (FTS.Day == 5) & (FTS.Approach == 'EB') & (FTS.TripID == 215)]
-# fts_stop_time = xdf.groupby(group_cols).apply(lambda x: x.loc[x.speed == 0].iloc[0]['TAY']).reset_index(name = 'stop_time')
-
-# filter out data with node, dirc, day, trip_id = 540, 'EB', 5, 215
-# reason: IndexError: single positional indexer is out-of-bounds
-# while computing time after yellow when the vehicle comes to stopping position
-FTS = FTS[~((FTS.Node == 540) & (FTS.Day == 5) & (FTS.Approach == 'EB') & (FTS.TripID == 215))]
-
 # find time after yellow when the vehicle comes to stopping position
-fts_stop_time = FTS.groupby(group_cols).apply(lambda x: x.loc[x.speed == 0].iloc[0]['TAY']).reset_index(name = 'stop_time')
+fts_stop_time = FTS.groupby(group_cols).apply(lambda x: x.loc[x.speed == 0].iloc[0]['TAY'], include_groups = False).reset_index(name = 'stop_time')
 
 # filter yellow onset FTS trips
-FTS = FTS[(FTS.TUY == 0) | (FTS.TAY == 0)] 
+FTS = FTS[(FTS.TUY == 0) | (FTS.TAY == 0)]
 
-# add speed limit data and filter out yellow onset speed 15 miles below speed limit
-FTS = pd.merge(FTS, ndf[['Node', 'Approach', 'Speed_limit']], on = ['Node', 'Approach'], how = 'left')
+# filter out yellow onset speed below speed limit by specified threshold
 FTS['Speed_diff'] = FTS.speed - FTS.Speed_limit # difference between yellow onset speed and speed limit
-FTS = FTS[FTS.Speed_diff >= -15] # filter out lower speeds
+FTS = FTS[FTS.Speed_diff >= -(speed_diff_threshold)] # filter out lower speeds
 
 # add stopping position and time after yellow to GLR data
 FTS = pd.merge(FTS, fts_stop_dist, on = group_cols, how = 'left')
@@ -167,16 +93,9 @@ FTS = pd.merge(FTS, fts_stop_time, on = group_cols, how = 'left')
 # check deceleration based on observed time to stop and speed
 FTS['Dec'] = round(FTS.speed*(5280/3600) / FTS.stop_time, 2)
 
-# filter out data with time until stop > 25 sec
-# filter out data with stopping position beyond 20 ft
-FTS = FTS[(FTS.stop_time < 25) & (FTS.stop_dist.between(-20, 20, inclusive = 'both'))]
-
-# filter out data with speed difference > -5 and yellow onset distance less than 80
-FTS = FTS[~((FTS.Xi < 80) & (FTS.Speed_diff <= 0))]
-
 # drop redundant columns and save file
-FTS.drop(['Signal', 'TUY', 'TAY', 'Group', 'Day', 'Speed_limit', 'Speed_diff', 'Dec'], axis = 1, inplace = True)
-FTS.to_csv("ignore/Wejo/trips_stop_go/FTS_filtered.txt", sep = '\t', index = False)
+FTS.drop(['ID', 'Signal', 'TUY', 'TAY', 'Group', 'Month', 'Day', 'Speed_diff'], axis = 1, inplace = True)
+FTS.to_csv("ignore/Wejo/trips_analysis/trips_FTS.txt", sep = '\t', index = False)
 
 
 # =============================================================================
