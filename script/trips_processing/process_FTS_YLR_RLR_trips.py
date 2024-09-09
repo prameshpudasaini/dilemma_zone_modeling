@@ -10,6 +10,13 @@ os.chdir(r"D:\GitHub\dilemma_zone_modeling")
 # read dataset with stop/go trips
 df = pd.read_csv("ignore/Wejo/trips_analysis/processed_trips.txt", sep = '\t')
 
+# read node geometry data and select relevant columns
+ndf = pd.read_csv("ignore/node_geometry.csv")
+ndf = ndf[['Node', 'Approach', 'Speed_limit', 'Crossing_length']]
+
+# merge node geometry data with FTS dataset
+df = pd.merge(df, ndf, on = ['Node', 'Approach'], how = 'left')
+
 # update localtime to pandas datetime and add day variable
 df.localtime = pd.to_datetime(df.localtime)
 df['Month'] = df.localtime.dt.month
@@ -18,15 +25,10 @@ df['Day'] = df.localtime.dt.day
 # add site ID variable for node and approach
 df['SiteID'] = df.Node.astype(str) + df.Approach
 
-# add speed limit info to dataset
-df.loc[df.Node.isin([216, 217]), 'Speed_limit'] = 35
-df.loc[df.Node.isin([517, 618]), 'Speed_limit'] = 40
-
 group_cols = ['Node', 'Approach', 'Month', 'Day', 'TripID']
 
 # parameters
 speed_diff_threshold = 20 # threshold for filtering out yellow onset speed below speed limit
-num_bins_threshold = 20
 
 
 # =============================================================================
@@ -72,7 +74,7 @@ def plotTrajectorySignal(node, dirc, month, day, trip_id):
 # filter FTS trips
 FTS = df.copy()[(df.Group == 'FTS')]
 
-# find the longest stopping position of all GLR trips
+# find the longest stopping position of all FTS trips
 fts_stop_dist = FTS.groupby(group_cols)['Xi'].agg(lambda x: x.mode().iloc[0]).reset_index()
 fts_stop_dist.rename(columns = {'Xi': 'stop_dist'}, inplace = True) # rename Xi column
 
