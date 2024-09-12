@@ -25,10 +25,8 @@ df['Day'] = df.localtime.dt.day
 # add site ID variable for node and approach
 df['SiteID'] = df.Node.astype(str) + df.Approach
 
-group_cols = ['Node', 'Approach', 'Month', 'Day', 'TripID']
-
-# parameters
 speed_diff_threshold = 20 # threshold for filtering out yellow onset speed below speed limit
+group_cols = ['Node', 'Approach', 'Month', 'Day', 'TripID']
 
 
 # =============================================================================
@@ -93,7 +91,12 @@ FTS = pd.merge(FTS, fts_stop_dist, on = group_cols, how = 'left')
 FTS = pd.merge(FTS, fts_stop_time, on = group_cols, how = 'left')
 
 # check deceleration based on observed time to stop and speed
-FTS['Dec'] = round(FTS.speed*(5280/3600) / FTS.stop_time, 2)
+FTS['Dec'] = -round(FTS.speed*(5280/3600) / FTS.stop_time, 2)
+
+# filter out outlier observations
+FTS = FTS[~((FTS.SiteID == '216EB') & (FTS.Month == 10) & (FTS.Day == 25) &(FTS.TripID == 511))]
+FTS = FTS[~((FTS.SiteID == '618NB') & (FTS.Month == 9) & (FTS.Day == 11) & (FTS.ID == 107210))]
+FTS = FTS[~((FTS.SiteID == '618EB') & (FTS.Month == 8) & (FTS.Day == 17) & (FTS.TripID == 252))]
 
 # drop redundant columns and save file
 FTS.drop(['ID', 'Signal', 'TUY', 'TAY', 'Group', 'Month', 'Day', 'Speed_diff'], axis = 1, inplace = True)
@@ -106,12 +109,6 @@ FTS.to_csv("ignore/Wejo/trips_analysis/trips_FTS.txt", sep = '\t', index = False
 
 # filter YLR trips
 YLR = df.copy()[(df.Group == 'YLR')]
-
-# # test to check IndexError: single positional indexer is out-of-bounds
-# ylr_cross_time = YLR.groupby(group_cols).apply(lambda x: x.loc[x.Xi < 0]['TAY'].values).reset_index(name = 'cross_time')
-# plotTrajectorySignal(217, 'EB', 6, 620)
-# plotTrajectorySignal(217, 'EB', 23, 570)
-# # Note: analysis showed that some trips processed as YLR did not reach intersection stop line.
 
 # filter out short YLR trips not reaching intersection stop line
 ylr_short_trips = YLR.groupby(group_cols).apply(lambda x: (x.Xi < 0).any()).reset_index(name = 'crosses_stop_line')
@@ -130,16 +127,16 @@ YLR = YLR[YLR.cross_time <= 4] # yellow interval of 4 sec is the maximum at all 
 # filter yellow onset YLR trips 
 YLR = YLR[(YLR.TUY == 0) | (YLR.TAY == 0)]
 
-# add speed limit data and compute speed difference
-YLR = pd.merge(YLR, ndf[['Node', 'Approach', 'Speed_limit']], on = ['Node', 'Approach'], how = 'left')
+# filter out yellow onset speed below speed limit by specified threshold
 YLR['Speed_diff'] = YLR.speed - YLR.Speed_limit # difference between yellow onset speed and speed limit
+YLR = YLR[YLR.Speed_diff >= -(speed_diff_threshold)] # filter out lower speeds
 
-# filter out yellow onset speed less than -15 mph and greater than 25 mph
-YLR = YLR[YLR.Speed_diff.between(-15, 25, inclusive = 'both')]
+# filter out outlier observations
+YLR = YLR[~((YLR.SiteID == '216WB') & (YLR.Month == 10) & (YLR.Day == 18) &(YLR.TripID == 588))]
 
 # drop redundant columns and save file
-YLR.drop(['Signal', 'TUY', 'TAY', 'Group', 'Day', 'Speed_limit', 'Speed_diff', 'crosses_stop_line'], axis = 1, inplace = True)
-YLR.to_csv("ignore/Wejo/trips_stop_go/YLR_filtered.txt", sep = '\t', index = False)
+YLR.drop(['ID', 'Signal', 'TUY', 'TAY', 'Group', 'Month', 'Day', 'Speed_diff', 'crosses_stop_line'], axis = 1, inplace = True)
+YLR.to_csv("ignore/Wejo/trips_analysis/trips_YLR.txt", sep = '\t', index = False)
 
 
 # =============================================================================
