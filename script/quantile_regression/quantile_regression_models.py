@@ -90,7 +90,6 @@ YLR = pd.read_csv("ignore/Wejo/trips_analysis/trips_YLR.txt", sep = '\t')
 FTS = process_predictors(FTS)
 YLR = process_predictors(YLR)
 
-
 # =============================================================================
 # quantile regression tests with different quantiles and bin sizes
 # =============================================================================
@@ -98,43 +97,189 @@ YLR = process_predictors(YLR)
 quantiles_FTS, quantiles_YLR = [0.05, 0.15, 0.5], [0.5, 0.85, 0.95]
 bin_sizes = [20, 25, 30, 35]
 
-def quantile_regression_test(xdf, bin_size, q, group):
+x_FTS = ['speed_fps', 'speed_sq', 'Crossing_length', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
+x_YLR = ['speed_fps', 'PSL_fps', 'Crossing_length', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
+
+def quantile_regression(xdf, bin_size, q, group, plot_data = False, return_data = False):
     list_site_df = []
+    # loop through each site and identify Xs, Xc
     for site in list(xdf.SiteID.unique()):
         site_df = xdf.copy()[xdf.SiteID == site]
         num_bins = int(len(site_df) / bin_size)
         site_df = identify_Xs_Xc(site_df, num_bins, group)
         list_site_df.append(site_df)
-        
-    sdf = pd.concat(list_site_df, ignore_index = True)
-    sdf = sdf[sdf.Xo == 1] # Xs or Xc observations
     
-    plot_yellow_onset_speed_distance(sdf, group)
+    sdf = pd.concat(list_site_df, ignore_index = True) # combine data from all sites
+    df_X = sdf.copy()[sdf.Xo == 1] # filter Xs or Xc observations
     
-    sdf['constant'] = 1 # constant term for regression
+    if plot_data == True:
+        plot_yellow_onset_speed_distance(df_X, group)
     
-    if group == 'FTS':
-        predictors = ['speed_fps', 'speed_sq', 'Crossing_length', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
-    elif group == 'YLR':
-        predictors = ['constant', 'speed_fps', 'is_PSL35', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
+    df_X['constant'] = 1 # constant term for regression
     
-    X = sdf[predictors]
-    y = sdf['Xi']
+    predictors = x_FTS if group == 'FTS' else x_YLR        
+    X = df_X[predictors]
+    y = df_X['Xi']
+    
     qmodel = sm.QuantReg(y, X).fit(q = q)
+    beta = qmodel.summary2().tables[1]['Coef.'].head(3).to_list()
     print(qmodel.summary())
+    
+    if return_data == True:
+        return {'sdf': sdf, 'df_X': df_X, 'beta': beta}
         
 # quantile regression tests for FTS vehicles
 for q in quantiles_FTS:
     for bin_size in bin_sizes:
         print(f"\nQuantile, bin size: {q}, {bin_size}")
-        quantile_regression_test(FTS, bin_size, q, 'FTS')
+        quantile_regression(FTS, bin_size, q, 'FTS')
         
 # quantile regression tests for YLR vehicles
 for q in quantiles_YLR:
     for bin_size in bin_sizes:
         print(f"\nQuantile, bin size: {q}, {bin_size}")
-        quantile_regression_test(YLR, bin_size, q, 'YLR')
+        quantile_regression(YLR, bin_size, q, 'YLR')
         
 # Observations and conclusions
 # Check Xs with q = 0.5, b = [20, 25]
-# Check Xc with q = 0.5, b = [20, 25]
+# Check Xc with q = 0.5, b = [30, 35]
+
+
+# =============================================================================
+# evaluate estimation of Xs and Xc at each site
+# =============================================================================
+
+def performance_evaluation(xdf, bin_size, q, group):
+    qmodel = quantile_regression(xdf, bin_size, q, group, plot_data = False, return_data = True)
+    sdf, df_X, beta = qmodel['sdf'], qmodel['df_X'], qmodel['beta']
+    
+    if group == 'FTS':
+        df_X['X'] = beta[0]*df_X['speed_fps'] + beta[1]*df_X['speed_sq'] + beta[2]*df_X['Crossing_length']
+    elif group == 'YLR':
+        df_X['X'] = beta[0]*df_X['speed_fps'] + beta[1]*df_X['PSL_fps'] + beta[2]*df_X['Crossing_length']
+    
+    error_list = []
+    for site in list(sdf.SiteID.unique()):
+        site_df = sdf.copy()[sdf.SiteID == site]
+        site_df_X = df_X.copy()[df_X.SiteID == site]
+        
+        MAE = round(np.mean(abs(site_df_X['Xi'] - site_df_X['X'])), 2)
+        RMSE = round(np.sqrt(np.mean((site_df_X['Xi'] - site_df_X['X'])**2)), 2)
+        error_list.append({'Site': site, 'MAE': MAE, 'RMSE': RMSE, 'Group': group})
+        print(f"MAE, RMSE for {site}: {MAE}, {RMSE}")
+        
+        PSL_fps = site_df.PSL_fps.values[0]
+        Crossing_length = site_df.Crossing_length.values[0]
+        
+        # create dataset for fitting quantile regression
+        y = np.linspace(site_df.speed_fps.min(), site_df.speed_fps.max(), 100) # speed values in fps
+        if group == 'FTS':
+            x = pd.DataFrame({'speed_fps': y, 'speed_sq': y**2, 'Crossing_length': Crossing_length})
+            X = beta[0]*x['speed_fps'] + beta[1]*x['speed_sq'] + beta[2]*x['Crossing_length']
+        elif group == 'YLR':
+            x = pd.DataFrame({'speed_fps': y, 'PSL_fps': PSL_fps, 'Crossing_length': Crossing_length})
+            X = beta[0]*x['speed_fps'] + beta[1]*x['PSL_fps'] + beta[2]*x['Crossing_length']
+        
+        y = np.round(y*3600/5280, decimals = 1) # fps-mph conversion
+        
+        plt.figure(figsize = (12, 8))
+        marker = 'o' if group == 'FTS' else 's'
+        # plot first-to-stop or crossing vehicles with xdf
+        # plot Xs or Xc observations with ydf
+        # plot quantile regression curve
+        plt.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = marker, facecolors = 'none', alpha = 0.6)
+        plt.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = marker)
+        plt.plot(X, y, color = 'red', label = 'tau = 1')
+        
+        plt.xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+        plt.ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+        plt.xticks(fontsize = 12)
+        plt.yticks(fontsize = 12)
+        plt.show()
+        
+    # performance dataset
+    pdf = pd.DataFrame(error_list)
+    return pdf
+
+FTS_pdf_20 = performance_evaluation(FTS, 20, 0.5, 'FTS')
+FTS_pdf_25 = performance_evaluation(FTS, 25, 0.5, 'FTS')
+YLR_pdf_30 = performance_evaluation(YLR, 30, 0.5, 'YLR')
+YLR_pdf_35 = performance_evaluation(YLR, 35, 0.5, 'YLR')
+
+print(f"Average MAE, RMSE for bin size 20: {round(FTS_pdf_20.MAE.mean(), 2)}, {round(FTS_pdf_20.RMSE.mean(), 2)}")
+print(f"Average MAE, RMSE for bin size 25: {round(FTS_pdf_25.MAE.mean(), 2)}, {round(FTS_pdf_25.RMSE.mean(), 2)}")
+print(f"Average MAE, RMSE for bin size 30: {round(YLR_pdf_30.MAE.mean(), 2)}, {round(YLR_pdf_30.RMSE.mean(), 2)}")
+print(f"Average MAE, RMSE for bin size 35: {round(YLR_pdf_35.MAE.mean(), 2)}, {round(YLR_pdf_35.RMSE.mean(), 2)}")
+
+FTS_pdf_25['Group'] = 'Xs'
+FTS_pdf_25['Method'] = 'QR'
+YLR_pdf_35['Group'] = 'Xc'
+YLR_pdf_35['Method'] = 'QR'
+pdf = pd.concat([FTS_pdf_25, YLR_pdf_35], ignore_index = True)
+
+# =============================================================================
+# performance comparison with ITE
+# =============================================================================
+
+FTS_Xs = quantile_regression(FTS, 25, 0.5, 'FTS', plot_data = False, return_data = True)['df_X']
+YLR_Xc = quantile_regression(YLR, 35, 0.5, 'YLR', plot_data = False, return_data = True)['df_X']
+
+FTS_Xs['ITE_X'] = FTS_Xs.speed_fps + (0.5/10)*FTS_Xs.speed_sq
+YLR_Xc['ITE_X'] = YLR_Xc.speed_fps * 4 # yellow interval
+
+def performance_comparison_ITE(xdf, group):
+    error_list = []
+    for site in list(xdf.SiteID.unique()):
+        site_df_X = xdf.copy()[xdf.SiteID == site]
+        
+        MAE = round(np.mean(abs(site_df_X['Xi'] - site_df_X['ITE_X'])), 2)
+        RMSE = round(np.sqrt(np.mean((site_df_X['Xi'] - site_df_X['ITE_X'])**2)), 2)
+        error_list.append({'Site': site, 'MAE': MAE, 'RMSE': RMSE, 'Group': group})
+        print(f"MAE, RMSE for {site}: {MAE}, {RMSE}")
+        
+    # performance dataset
+    pdf = pd.DataFrame(error_list)
+    return pdf
+
+FTS_pdf_ITE = performance_comparison_ITE(FTS_Xs, 'FTS')
+YLR_pdf_ITE = performance_comparison_ITE(YLR_Xc, 'YLR')
+
+FTS_pdf_ITE['Group'] = 'Xs'
+FTS_pdf_ITE['Method'] = 'ITE'
+YLR_pdf_ITE['Group'] = 'Xc'
+YLR_pdf_ITE['Method'] = 'ITE'
+pdf = pd.concat([pdf, FTS_pdf_ITE, YLR_pdf_ITE], ignore_index = True)
+
+px.bar(pdf, x = 'Site', y = 'RMSE', color = 'Method', facet_col = 'Group', barmode = 'group')
+
+# =============================================================================
+# performance comparison with Type II travel time-based
+# =============================================================================
+
+FTS_Xs['TT_X'] = 2.5 * FTS_Xs.speed_fps
+YLR_Xc['TT_X'] = 4 * YLR_Xc.speed_fps
+
+def performance_comparison_TT(xdf, group):
+    error_list = []
+    for site in list(xdf.SiteID.unique()):
+        site_df_X = xdf.copy()[xdf.SiteID == site]
+        
+        MAE = round(np.mean(abs(site_df_X['Xi'] - site_df_X['TT_X'])), 2)
+        RMSE = round(np.sqrt(np.mean((site_df_X['Xi'] - site_df_X['TT_X'])**2)), 2)
+        error_list.append({'Site': site, 'MAE': MAE, 'RMSE': RMSE, 'Group': group})
+        print(f"MAE, RMSE for {site}: {MAE}, {RMSE}")
+        
+    # performance dataset
+    pdf = pd.DataFrame(error_list)
+    return pdf
+
+FTS_pdf_TT = performance_comparison_TT(FTS_Xs, 'FTS')
+YLR_pdf_TT = performance_comparison_TT(YLR_Xc, 'YLR')
+
+FTS_pdf_TT['Group'] = 'Xs'
+FTS_pdf_TT['Method'] = 'TT'
+YLR_pdf_TT['Group'] = 'Xc'
+YLR_pdf_TT['Method'] = 'TT'
+pdf = pd.concat([pdf, FTS_pdf_TT, YLR_pdf_TT], ignore_index = True)
+
+px.bar(pdf, x = 'Site', y = 'RMSE', color = 'Method', facet_col = 'Group', barmode = 'group')
