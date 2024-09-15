@@ -37,7 +37,7 @@ group_cols = ['Node', 'Approach', 'Month', 'Day', 'TripID']
 def plotTrajectorySignal(node, dirc, month, day, trip_id):
     # filter df with trajectory and signal info for trip id
     trip_df = df.copy()[(df.Node == node) & (df.Approach == dirc) & (df.Month == month) & (df.Day == day) & (df.TripID == trip_id)]
-
+    
     fig = px.scatter(
         trip_df,
         x = 'Xi',
@@ -156,19 +156,49 @@ RLR = RLR[RLR.crosses_stop_line == True]
 # find the time after yellow when vehicle crosses the stop line for a trip
 rlr_cross_time = RLR.groupby(group_cols).apply(lambda x: x.loc[x.Xi < 0]['TAY'].values[0]).reset_index(name = 'cross_time')
 
-# add cross time info to RLR dataset and filter out cross times longer than 4 sec
+# add cross time info to RLR dataset
 RLR = pd.merge(RLR, rlr_cross_time, on = group_cols, how = 'left')
+
+# filter yellow onset RLR trips 
+RLR0 = RLR.copy()[(RLR.TUY == 0) | (RLR.TAY == 0)]
+RLR0.reset_index(drop = True, inplace = True)
+
+# check trajectories of RLR vehicles
+# plotTrajectorySignal(216, 'WB', 8, 7, 96) # FTS before stop line identified as RLR
+# plotTrajectorySignal(618, 'SB', 8, 4, 336) # true RLR
+# plotTrajectorySignal(517, 'SB', 9, 22, 361) # true RLR
+
+# for i in range(len(RLR0)):
+#     node = RLR0.Node[i]
+#     dirc = RLR0.Approach[i]
+#     month = RLR0.Month[i]
+#     day = RLR0.Day[i]
+#     trip_id = RLR0.TripID[i]
+#     plotTrajectorySignal(node, dirc, month, day, trip_id)
+
+# filter out vehicles making stops before or within 100 ft of stop line
+false_rlr = RLR.groupby(group_cols).apply(lambda x: ((x.Xi < 100) & (x.speed < 5)).any()).reset_index(name = 'stops_before_crossing')
+RLR1 = false_rlr[false_rlr.stops_before_crossing == True]
+RLR1.reset_index(drop = True, inplace = True)
+# for i in range(len(RLR1)):
+#     node = RLR1.Node[i]
+#     dirc = RLR1.Approach[i]
+#     month = RLR1.Month[i]
+#     day = RLR1.Day[i]
+#     trip_id = RLR1.TripID[i]
+#     plotTrajectorySignal(node, dirc, month, day, trip_id)
+
+# add 'stops before crossing' info to RLR dataset and filter out false RLRs
+RLR = pd.merge(RLR, false_rlr, on = group_cols, how = 'left')
+RLR = RLR[RLR.stops_before_crossing == False]
 
 # filter yellow onset RLR trips 
 RLR = RLR[(RLR.TUY == 0) | (RLR.TAY == 0)]
 
-# add speed limit data and compute speed difference
-RLR = pd.merge(RLR, ndf[['Node', 'Approach', 'Speed_limit']], on = ['Node', 'Approach'], how = 'left')
+# filter out yellow onset speed below speed limit by specified threshold
 RLR['Speed_diff'] = RLR.speed - RLR.Speed_limit # difference between yellow onset speed and speed limit
-
-# filter out yellow onset speed less than -15 mph and greater than 25 mph
-RLR = RLR[RLR.Speed_diff >= -15]
+RLR = RLR[RLR.Speed_diff >= -(speed_diff_threshold)] # filter out lower speeds
 
 # drop redundant columns and save file
-RLR.drop(['Signal', 'TUY', 'TAY', 'Group', 'Day', 'Speed_limit', 'Speed_diff', 'crosses_stop_line'], axis = 1, inplace = True)
-RLR.to_csv("ignore/Wejo/trips_stop_go/RLR_filtered.txt", sep = '\t', index = False)
+RLR.drop(['ID', 'Signal', 'TUY', 'TAY', 'Group', 'Month', 'Day', 'Speed_diff', 'crosses_stop_line', 'stops_before_crossing'], axis = 1, inplace = True)
+RLR.to_csv("ignore/Wejo/trips_analysis/trips_RLR.txt", sep = '\t', index = False)
