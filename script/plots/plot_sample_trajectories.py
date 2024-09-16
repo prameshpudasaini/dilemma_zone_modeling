@@ -6,9 +6,9 @@ import plotly.express as px
 import plotly.io as pio
 pio.renderers.default = 'browser'
 
-os.chdir(r"D:\GitHub\dilemma_Wejo")
+os.chdir(r"D:\GitHub\dilemma_zone_modeling")
 
-df = pd.read_csv("ignore/Wejo/trips_stop_go/trips_stop_go.txt", sep = '\t')
+df = pd.read_csv("ignore/processed_trips_old.txt", sep = '\t')
 df.localtime = pd.to_datetime(df.localtime)
 df = df[df.localtime.dt.day == 1]
 
@@ -45,23 +45,23 @@ m = 15
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize = (12, 6))
 
 ax1.scatter(fdf.Xi, fdf.localtime, c = fdf.signal_color, s = m)
-ax1.set_title('(a) First-to-stop (FTS)', fontsize = 14, fontweight = 'bold')
+ax1.set_title('(a) First to stop (FTS)', fontsize = 13, fontweight = 'bold')
 ax1.set_xlabel('Distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
 ax1.set_ylabel('Timestamp', fontsize = 12, fontweight = 'bold')
 ax1.tick_params(axis = 'both', which = 'major', labelsize = 12)
 
 ax2.scatter(ydf.Xi, ydf.localtime, c = ydf.signal_color, s = m)
-ax2.set_title('(b) Yellow light runner (YLR)', fontsize = 14, fontweight = 'bold')
+ax2.set_title('(b) Yellow light runner (YLR)', fontsize = 13, fontweight = 'bold')
 ax2.set_xlabel('Distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
 ax2.set_ylabel('Timestamp', fontsize = 12, fontweight = 'bold')
 ax2.tick_params(axis = 'both', which = 'major', labelsize = 12)
 
 ax3.scatter(rdf.Xi, rdf.localtime, c = rdf.signal_color, s = m)
-ax3.set_title('(c) Red light runner (RLR)', fontsize = 14, fontweight = 'bold')
+ax3.set_title('(c) Red light runner (RLR)', fontsize = 13, fontweight = 'bold')
 ax3.set_xlabel('Distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
 ax3.set_ylabel('Timestamp', fontsize = 12, fontweight = 'bold')
 ax3.tick_params(axis = 'both', which = 'major', labelsize = 12)
 
 plt.tight_layout(pad = 1)
-plt.savefig('output/trajectory_example_FTS_YLR_RLR.png', dpi = 600)
+plt.savefig('output/sample_trajectories_FTS_YLR_RLR.png', dpi = 1200)
 plt.show()
