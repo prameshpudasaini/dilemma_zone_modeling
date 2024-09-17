@@ -60,14 +60,12 @@ def identify_Xs_Xc(data, num_bins, group):
 def plot_yellow_onset_speed_distance(xdf, group):
     ydf = xdf.copy()[xdf.Xo == 1] # observations with Xs or Xc
     
-    plt.figure(figsize = (12, 8))
     marker = 'o' if group == 'FTS' else 's'
-    
+    plt.figure(figsize = (12, 8))
     # plot first-to-stop or crossing vehicles with xdf
     # plot Xs or Xc observations with ydf
     plt.scatter(xdf['Xi'], xdf['speed'], color = 'black', marker = marker, facecolors = 'none', alpha = 0.6)
     plt.scatter(ydf['Xi'], ydf['speed'], color = 'black', marker = marker)
-    
     plt.xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
     plt.ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
     plt.xticks(fontsize = 12)
@@ -94,11 +92,11 @@ YLR = process_predictors(YLR)
 # quantile regression tests with different quantiles and bin sizes
 # =============================================================================
 
-quantiles_FTS, quantiles_YLR = [0.05, 0.15, 0.5], [0.5, 0.85, 0.95]
-bin_sizes = [20, 25, 30, 35]
-
 x_FTS = ['speed_fps', 'speed_sq', 'Crossing_length', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
 x_YLR = ['speed_fps', 'PSL_fps', 'Crossing_length', 'int_speed_peak', 'int_speed_night', 'int_speed_weekend']
+
+quantiles_FTS, quantiles_YLR = [0.05, 0.15, 0.5], [0.5, 0.85, 0.95]
+bin_sizes = [20, 25, 30, 35]
 
 def quantile_regression(xdf, bin_size, q, group, plot_data = False, return_data = False):
     list_site_df = []
@@ -117,7 +115,7 @@ def quantile_regression(xdf, bin_size, q, group, plot_data = False, return_data 
     
     df_X['constant'] = 1 # constant term for regression
     
-    predictors = x_FTS if group == 'FTS' else x_YLR        
+    predictors = x_FTS if group == 'FTS' else x_YLR
     X = df_X[predictors]
     y = df_X['Xi']
     
@@ -202,9 +200,12 @@ def performance_evaluation(xdf, bin_size, q, group):
     return pdf
 
 FTS_pdf_20 = performance_evaluation(FTS, 20, 0.5, 'FTS')
-FTS_pdf_25 = performance_evaluation(FTS, 25, 0.5, 'FTS')
+FTS_pdf_25 = performance_evaluation(FTS, 25, 0.5, 'FTS') # best results for Xs
 YLR_pdf_30 = performance_evaluation(YLR, 30, 0.5, 'YLR')
-YLR_pdf_35 = performance_evaluation(YLR, 35, 0.5, 'YLR')
+YLR_pdf_35 = performance_evaluation(YLR, 35, 0.5, 'YLR') # best results for Xc
+
+FTS_pdf_25_q15 = performance_evaluation(FTS, 25, 0.15, 'FTS') # Xs for 15th percentile
+YLR_pdf_35_q85 = performance_evaluation(YLR, 35, 0.85, 'YLR') # Xc for 85th percentile
 
 print(f"Average MAE, RMSE for bin size 20: {round(FTS_pdf_20.MAE.mean(), 2)}, {round(FTS_pdf_20.RMSE.mean(), 2)}")
 print(f"Average MAE, RMSE for bin size 25: {round(FTS_pdf_25.MAE.mean(), 2)}, {round(FTS_pdf_25.RMSE.mean(), 2)}")
@@ -215,16 +216,21 @@ FTS_pdf_25['Group'] = 'Xs'
 FTS_pdf_25['Method'] = 'QR'
 YLR_pdf_35['Group'] = 'Xc'
 YLR_pdf_35['Method'] = 'QR'
-pdf = pd.concat([FTS_pdf_25, YLR_pdf_35], ignore_index = True)
+pdf0 = pd.concat([FTS_pdf_25, YLR_pdf_35], ignore_index = True)
+
 
 # =============================================================================
 # performance comparison with ITE
 # =============================================================================
 
-FTS_Xs = quantile_regression(FTS, 25, 0.5, 'FTS', plot_data = False, return_data = True)['df_X']
-YLR_Xc = quantile_regression(YLR, 35, 0.5, 'YLR', plot_data = False, return_data = True)['df_X']
+FTS_results = quantile_regression(FTS, 25, 0.5, 'FTS', plot_data = False, return_data = True)
+YLR_results = quantile_regression(YLR, 35, 0.5, 'YLR', plot_data = False, return_data = True)
 
-FTS_Xs['ITE_X'] = FTS_Xs.speed_fps + (0.5/10)*FTS_Xs.speed_sq
+FTS_Xs = FTS_results['df_X']
+YLR_Xc = YLR_results['df_X']
+
+prt, dec_max = 1, 10
+FTS_Xs['ITE_X'] = prt * FTS_Xs.speed_fps + (1/(2*dec_max))*FTS_Xs.speed_sq
 YLR_Xc['ITE_X'] = YLR_Xc.speed_fps * 4 # yellow interval
 
 def performance_comparison_ITE(xdf, group):
@@ -248,16 +254,15 @@ FTS_pdf_ITE['Group'] = 'Xs'
 FTS_pdf_ITE['Method'] = 'ITE'
 YLR_pdf_ITE['Group'] = 'Xc'
 YLR_pdf_ITE['Method'] = 'ITE'
-pdf = pd.concat([pdf, FTS_pdf_ITE, YLR_pdf_ITE], ignore_index = True)
+pdf1 = pd.concat([pdf0, FTS_pdf_ITE, YLR_pdf_ITE], ignore_index = True)
 
-px.bar(pdf, x = 'Site', y = 'RMSE', color = 'Method', facet_col = 'Group', barmode = 'group')
 
 # =============================================================================
-# performance comparison with Type II travel time-based
+# performance comparison with Type II travel time-based method
 # =============================================================================
 
 FTS_Xs['TT_X'] = 2.5 * FTS_Xs.speed_fps
-YLR_Xc['TT_X'] = 4 * YLR_Xc.speed_fps
+YLR_Xc['TT_X'] = 5.5 * YLR_Xc.speed_fps
 
 def performance_comparison_TT(xdf, group):
     error_list = []
@@ -280,6 +285,44 @@ FTS_pdf_TT['Group'] = 'Xs'
 FTS_pdf_TT['Method'] = 'TT'
 YLR_pdf_TT['Group'] = 'Xc'
 YLR_pdf_TT['Method'] = 'TT'
-pdf = pd.concat([pdf, FTS_pdf_TT, YLR_pdf_TT], ignore_index = True)
+pdf2 = pd.concat([pdf1, FTS_pdf_TT, YLR_pdf_TT], ignore_index = True)
 
-px.bar(pdf, x = 'Site', y = 'RMSE', color = 'Method', facet_col = 'Group', barmode = 'group')
+
+# =============================================================================
+# performance comparison with Type II probabilistic method
+# =============================================================================
+
+FTS = FTS_results['sdf']
+YLR = YLR_results['sdf']
+
+def performance_comparison_prob(xdf, group):
+    error_list = []
+    for site in list(xdf.SiteID.unique()):
+        site_df = xdf.copy()[xdf.SiteID == site]
+        
+        percentile = 10 if group == 'FTS' else 90
+        site_df['Prob_X'] = np.percentile(site_df['Xi'], percentile)
+        site_df_X = site_df[site_df.Xo == 1]
+        
+        MAE = round(np.mean(abs(site_df_X['Xi'] - site_df_X['Prob_X'])), 2)
+        RMSE = round(np.sqrt(np.mean((site_df_X['Xi'] - site_df_X['Prob_X'])**2)), 2)
+        error_list.append({'Site': site, 'MAE': MAE, 'RMSE': RMSE, 'Group': group})
+        print(f"MAE, RMSE for {site}: {MAE}, {RMSE}")
+        
+    # performance dataset
+    pdf = pd.DataFrame(error_list)
+    return pdf
+
+FTS_pdf_Prob = performance_comparison_prob(FTS, 'FTS')
+YLR_pdf_Prob = performance_comparison_prob(YLR, 'YLR')
+
+FTS_pdf_Prob['Group'] = 'Xs'
+FTS_pdf_Prob['Method'] = 'Prob'
+YLR_pdf_Prob['Group'] = 'Xc'
+YLR_pdf_Prob['Method'] = 'Prob'
+pdf3 = pd.concat([pdf2, FTS_pdf_Prob, YLR_pdf_Prob], ignore_index = True)
+
+px.bar(pdf3, x = 'Site', y = 'MAE', color = 'Method', facet_col = 'Group', barmode = 'group')
+px.bar(pdf3, x = 'Site', y = 'RMSE', color = 'Method', facet_row = 'Group', barmode = 'group')
+
+pdf3.groupby(['Group', 'Method'])['RMSE'].mean()
