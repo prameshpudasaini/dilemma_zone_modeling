@@ -81,6 +81,12 @@ def plot_yellow_onset_speed_distance(xdf, group):
 FTS = pd.read_csv("ignore/Wejo/trips_analysis/trips_FTS.txt", sep = '\t')
 YLR = pd.read_csv("ignore/Wejo/trips_analysis/trips_YLR.txt", sep = '\t')
 
+# map siteIDs
+FTS['NodeID'] = FTS.Node.map({216: 1, 217: 2, 517: 3, 618: 4})
+YLR['NodeID'] = YLR.Node.map({216: 1, 217: 2, 517: 3, 618: 4})
+FTS.SiteID = FTS.NodeID.astype(str) + FTS.Approach
+YLR.SiteID = YLR.NodeID.astype(str) + YLR.Approach
+
 # px.scatter(FTS, x = 'Xi', y = 'speed').show()
 # px.scatter(YLR, x = 'Xi', y = 'speed').show()
 
@@ -322,7 +328,28 @@ YLR_pdf_Prob['Group'] = 'Xc'
 YLR_pdf_Prob['Method'] = 'Prob'
 pdf3 = pd.concat([pdf2, FTS_pdf_Prob, YLR_pdf_Prob], ignore_index = True)
 
-px.bar(pdf3, x = 'Site', y = 'MAE', color = 'Method', facet_col = 'Group', barmode = 'group')
-px.bar(pdf3, x = 'Site', y = 'RMSE', color = 'Method', facet_row = 'Group', barmode = 'group')
 
-pdf3.groupby(['Group', 'Method'])['RMSE'].mean()
+# =============================================================================
+# accuracy evaluation across study sites
+# =============================================================================
+
+mean_mae = pdf3.groupby(['Group', 'Method'])['MAE'].mean().reset_index()
+mean_rmse = pdf3.groupby(['Group', 'Method'])['RMSE'].mean().reset_index()
+
+mean_mae_rmse = pd.merge(mean_mae, mean_rmse, on = ['Group', 'Method'], how = 'left')
+mean_mae_rmse['Site'] = 'All Sites'
+
+pdf4 = pd.concat([pdf3, mean_mae_rmse], ignore_index = True)
+
+px.bar(pdf4, x = 'Site', y = 'MAE', color = 'Method', facet_col = 'Group', barmode = 'group')
+px.bar(pdf4, x = 'Site', y = 'RMSE', color = 'Method', facet_row = 'Group', barmode = 'group')
+
+pdf4.Group = pdf4.Group.map({'Xs': 'End of dilemma zone (Xs)', 'Xc': 'Start of dilemma zone (Xc)'})
+pdf4.Method = pdf4.Method.map({
+    'QR': 'Type I DZ based on proposed method',
+    'ITE': 'Type I DZ based on ITE parameters',
+    'TT': 'Type II DZ based on travel time to stop',
+    'Prob': 'Type II DZ based on probability of stopping'
+})
+
+pdf4.to_csv("ignore/DZ_estimation_accuracy.txt", sep = '\t', index = False)
