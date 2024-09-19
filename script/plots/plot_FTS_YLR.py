@@ -258,3 +258,129 @@ fig.legend(handles, labels, loc = 'lower center', bbox_to_anchor = (0.5, -0.05),
 plt.tight_layout(pad = 1)
 plt.savefig('output/scatter_YLR_Xc.png', bbox_inches = 'tight', dpi = 1200)
 plt.show()
+
+
+# =============================================================================
+# test: plot Xs, Xc, and quantile regression curves
+# =============================================================================
+
+q15_FTS = quantile_regression(FTS, 25, 0.15, 'FTS', return_data = True)
+q50_FTS = quantile_regression(FTS, 25, 0.5, 'FTS', return_data = True)
+
+q50_YLR = quantile_regression(YLR, 35, 0.5, 'YLR', return_data = True)
+q85_YLR = quantile_regression(YLR, 35, 0.85, 'YLR', return_data = True)
+
+# px.scatter(q15_FTS['df_X'], x = 'Xi', y = 'speed')
+# px.scatter(q50_FTS['df_X'], x = 'Xi', y = 'speed')
+
+plt.figure(figsize = (8, 6))
+plt.scatter(q50_FTS['df_X'].Xi, q50_FTS['df_X'].speed, color = 'blue', marker = 'o', label = 'Observed Xs')
+plt.scatter(q50_YLR['df_X'].Xi, q50_YLR['df_X'].speed, color = 'green', marker = 's', label = 'Observed Xs')
+plt.xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+plt.ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+plt.xticks(fontsize = 12)
+plt.yticks(fontsize = 12)
+legend = plt.legend(loc = 'lower right', ncol = 2, fontsize = 12)
+plt.tight_layout(pad = 1)
+plt.show()
+
+
+# =============================================================================
+# plot Xs, Xc, and quantile regression curves for study sites
+# =============================================================================
+
+# create 4 subplots of Xi vs speed for FTS and YLR
+# fig, axes = plt.subplots(4, 1, figsize = (12, 20))
+# ax1, ax2, ax3, ax4 = axes[0], axes[1], axes[2], axes[3]
+fig, axes = plt.subplots(2, 2, figsize = (12, 10))
+ax1 = axes[0, 0]
+ax2 = axes[0, 1]
+ax3 = axes[1, 0]
+ax4 = axes[1, 1]
+
+# 1st site
+site_df = FTS_1EB['site_df']
+site_df_X = FTS_1EB['site_df_X']
+X, y = FTS_1EB['X'], FTS_1EB['y']
+ax1.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 'o', facecolors = 'none', alpha = 0.4, label = 'FTS vehicle')
+ax1.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 'o', label = 'Observed Xs')
+ax1.plot(X, y, color = 'red')
+
+site_df = YLR_1EB['site_df']
+site_df_X = YLR_1EB['site_df_X']
+X, y = YLR_1EB['X'], YLR_1EB['y']
+ax1.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 's', facecolors = 'none', alpha = 0.4, label = 'YLR vehicle')
+ax1.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 's', label = 'Observed Xc')
+ax1.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+ax1.set_title('(a) Site: 1EB', fontsize = 14, fontweight = 'bold')
+ax1.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax1.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax1.tick_params(axis = 'both', which = 'major', labelsize = 12)
+
+# 2nd site
+site_df = FTS_2WB['site_df']
+site_df_X = FTS_2WB['site_df_X']
+X, y = FTS_2WB['X'], FTS_2WB['y']
+ax2.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 'o', facecolors = 'none', alpha = 0.4, label = 'FTS vehicle')
+ax2.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 'o', label = 'Observed Xs')
+ax2.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+site_df = YLR_2WB['site_df']
+site_df_X = YLR_2WB['site_df_X']
+X, y = YLR_2WB['X'], YLR_2WB['y']
+ax2.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 's', facecolors = 'none', alpha = 0.4, label = 'YLR vehicle')
+ax2.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 's', label = 'Observed Xc')
+ax2.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+ax2.set_title('(b) Site: 2WB', fontsize = 14, fontweight = 'bold')
+ax2.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax2.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax2.tick_params(axis = 'both', which = 'major', labelsize = 12)
+
+# 3rd site
+site_df = FTS_3NB['site_df']
+site_df_X = FTS_3NB['site_df_X']
+X, y = FTS_3NB['X'], FTS_3NB['y']
+ax3.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 'o', facecolors = 'none', alpha = 0.4, label = 'FTS vehicle')
+ax3.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 'o', label = 'Observed Xs')
+ax3.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+site_df = YLR_3NB['site_df']
+site_df_X = YLR_3NB['site_df_X']
+X, y = YLR_3NB['X'], YLR_3NB['y']
+ax3.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 's', facecolors = 'none', alpha = 0.4, label = 'YLR vehicle')
+ax3.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 's', label = 'Observed Xc')
+ax3.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+ax3.set_title('(c) Site: 3NB', fontsize = 14, fontweight = 'bold')
+ax3.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax3.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax3.tick_params(axis = 'both', which = 'major', labelsize = 12)
+
+# 4th site
+site_df = FTS_4SB['site_df']
+site_df_X = FTS_4SB['site_df_X']
+X, y = FTS_4SB['X'], FTS_4SB['y']
+ax4.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 'o', facecolors = 'none', alpha = 0.4, label = 'FTS vehicle')
+ax4.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 'o', label = 'Observed Xs')
+ax4.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+site_df = YLR_4SB['site_df']
+site_df_X = YLR_4SB['site_df_X']
+X, y = YLR_4SB['X'], YLR_4SB['y']
+ax4.scatter(site_df['Xi'], site_df['speed'], color = 'black', marker = 's', facecolors = 'none', alpha = 0.4, label = 'YLR vehicle')
+ax4.scatter(site_df_X['Xi'], site_df_X['speed'], color = 'black', marker = 's', label = 'Observed Xc')
+ax4.plot(X, y, color = 'red', label = 'Type I DZ boundary')
+
+ax4.set_title('(d) Site: 4SB', fontsize = 14, fontweight = 'bold')
+ax4.set_xlabel('Yellow onset distance from stop line (ft)', fontsize = 12, fontweight = 'bold')
+ax4.set_ylabel('Yellow onset speed (mph)', fontsize = 12, fontweight = 'bold')
+ax4.tick_params(axis = 'both', which = 'major', labelsize = 12)
+
+handles, labels = ax1.get_legend_handles_labels()
+fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=5, fontsize=12)
+
+plt.tight_layout(pad = 1)
+plt.savefig('output/plot_FTS_YLR_Xs_Xc.png', bbox_inches = 'tight', dpi = 1200)
+plt.show()
