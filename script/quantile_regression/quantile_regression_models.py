@@ -2,7 +2,10 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
 import statsmodels.api as sm
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 
 import plotly.express as px
 import plotly.io as pio
@@ -298,16 +301,64 @@ pdf2 = pd.concat([pdf1, FTS_pdf_TT, YLR_pdf_TT], ignore_index = True)
 # performance comparison with Type II probabilistic method
 # =============================================================================
 
+# function to compute Type II DZ based on probability of stopping
+def compute_TypeII_DZ(xdf):
+    # get distances and corresponding stop/go decisions
+    distances, stops = xdf.Xi.to_numpy(), xdf.stops.to_numpy()
+    
+    # scale the distance feature for logistic regression
+    scaler = StandardScaler()
+    distances_scaled = scaler.fit_transform(distances.reshape(-1, 1))
+    
+    # fit logistic regression model
+    log_reg = LogisticRegression()
+    log_reg.fit(distances_scaled, stops)
+    
+    # define probability thresholds and compute corresponding log odds
+    probs = np.array([0.1, 0.9])
+    log_odds = np.log(probs / (1 - probs))
+    
+    # find scaled distances for probs threshold using model coefficients
+    scaled_dist_10_90 = (log_odds - log_reg.intercept_) / log_reg.coef_[0]
+    
+    # unscale distances to get original values
+    dist_10_90 = scaler.inverse_transform(scaled_dist_10_90.reshape(-1, 1))
+    
+    DZ_end = round(dist_10_90[0][0], 1)
+    DZ_start = round(dist_10_90[1][0], 1)
+    
+    return {'start': DZ_start, 'end': DZ_end}
+
 FTS = FTS_results['sdf']
 YLR = YLR_results['sdf']
+
+# add stops as a binary decision variable
+FTS['stops'] = 1
+YLR['stops'] = 0
+
+# combine two datasets
+prob_df = pd.concat([FTS, YLR], ignore_index = True)
+
+# identify Type II DZ boundary for each site
+site_prob_DZ = []
+for site in list(prob_df.SiteID.unique()):
+    site_df = prob_df.copy()[prob_df.SiteID == site]
+    prob_DZ = compute_TypeII_DZ(site_df)
+    site_prob_DZ.append([site, prob_DZ['start'], prob_DZ['end']])
+    
+site_prob_DZ = pd.DataFrame(site_prob_DZ, columns = ['SiteID', 'Xc', 'Xs'])
 
 def performance_comparison_prob(xdf, group):
     error_list = []
     for site in list(xdf.SiteID.unique()):
         site_df = xdf.copy()[xdf.SiteID == site]
+        prob_DZ = site_prob_DZ[site_prob_DZ.SiteID == site]
         
-        percentile = 10 if group == 'FTS' else 90
-        site_df['Prob_X'] = np.percentile(site_df['Xi'], percentile)
+        if group == 'FTS':
+            site_df['Prob_X'] = prob_DZ['Xs'].values[0]
+        elif group == 'YLR':
+            site_df['Prob_X'] = prob_DZ['Xc'].values[0]
+        
         site_df_X = site_df[site_df.Xo == 1]
         
         MAE = round(np.mean(abs(site_df_X['Xi'] - site_df_X['Prob_X'])), 2)
@@ -349,7 +400,7 @@ pdf4.Method = pdf4.Method.map({
     'QR': 'Type I DZ based on proposed method',
     'ITE': 'Type I DZ based on ITE parameters',
     'TT': 'Type II DZ based on travel time to stop',
-    'Prob': 'Type II DZ based on probability of stopping'
+    'Prob': 'Type II DZ based on stopping probability'
 })
 
 pdf4.to_csv("ignore/DZ_estimation_accuracy.txt", sep = '\t', index = False)
