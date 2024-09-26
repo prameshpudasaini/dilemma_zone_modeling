@@ -7,7 +7,7 @@ df <- fread("ignore/DZ_estimation_accuracy.txt", sep = '\t')
 method_levels = c('Type I DZ based on proposed method', 
                   'Type I DZ based on ITE parameters', 
                   'Type II DZ based on travel time to stop', 
-                  'Type II DZ based on probability of stopping')
+                  'Type II DZ based on stopping probability')
 group_levels = c('Start of dilemma zone (Xc)', 
                  'End of dilemma zone (Xs)')
 
@@ -31,6 +31,8 @@ plot <- ggplot(df, aes(Site, RMSE, fill = Method)) +
           legend.box = 'vertical',
           legend.spacing = unit(0, 'cm'),
           legend.box.margin = margin(0, 0, 0, 0, 'cm'),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor = element_blank(),
           panel.border = element_rect(color = 'black', fill = NA),
           strip.text = element_text(size = 12, face = 'bold'),
           plot.background = element_rect(fill = 'white', color = 'NA')) + 
