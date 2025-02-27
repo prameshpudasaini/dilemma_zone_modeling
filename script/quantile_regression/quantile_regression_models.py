@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.io as pio
 pio.renderers.default = 'browser'
 
-os.chdir(r"D:\GitHub\dilemma_zone_modeling")
+os.chdir(r"/Users/prameshpudasaini/Library/CloudStorage/OneDrive-UniversityofArizona/GitHub/dilemma_zone_modeling")
 
 # =============================================================================
 # functions
@@ -226,6 +226,12 @@ FTS_pdf_25['Method'] = 'QR'
 YLR_pdf_35['Group'] = 'Xc'
 YLR_pdf_35['Method'] = 'QR'
 pdf0 = pd.concat([FTS_pdf_25, YLR_pdf_35], ignore_index = True)
+
+# save Xs and Xc data
+Xs_data = quantile_regression(FTS, 25, 0.5, 'FTS', return_data = True)['df_X']
+Xc_data = quantile_regression(YLR, 35, 0.5, 'YLR', return_data = True)['df_X']
+Xs_data.to_csv("ignore/quantile_regression_data/Xs_data.txt", sep = '\t', index = False)
+Xc_data.to_csv("ignore/quantile_regression_data/Xc_data.txt", sep = '\t', index = False)
 
 
 # =============================================================================

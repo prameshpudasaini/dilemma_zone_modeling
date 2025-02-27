@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
 
-os.chdir(r"D:\GitHub\dilemma_zone_modeling")
+os.chdir(r"/Users/prameshpudasaini/Library/CloudStorage/OneDrive-UniversityofArizona/GitHub/dilemma_zone_modeling")
 
 # read model dataset
 FTS = pd.read_csv("ignore/Wejo/trips_analysis/trips_FTS.txt", sep = '\t')
