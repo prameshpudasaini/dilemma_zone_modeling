@@ -3,7 +3,7 @@ library(lubridate)
 library(leaflet)
 
 visualize_trip <- function(node, dirc, month, day, trip_id){
-    file_path <- paste0("ignore/Wejo/processed_data/", node, "_", dirc, ".txt")
+    file_path <- paste0("ignore/Wejo/processed_trips2/", node, "_", dirc, ".txt")
     df <- fread(file_path, sep = '\t')
     
     # filter for trip ID, month, day
@@ -22,4 +22,15 @@ visualize_trip <- function(node, dirc, month, day, trip_id){
         )
 }
 
-visualize_trip(216, 'EB', 8, 1, 258)
+tdf <- fread("ignore/Wejo/processed_trips1/217_EB.txt", sep = '\t')
+tdf = tdf[TripID == 2 & ID == 42, ]
+
+leaflet(tdf) |> 
+    addTiles() |> 
+    addCircleMarkers(
+        lng = ~Longitude, 
+        lat = ~Latitude,
+        radius = 1
+    )
+
+visualize_trip(217, 'EB', 8, 1, 2)
